@@ -1133,9 +1133,10 @@ func (p *MitmProxy) buildUpstreamTransport() *http.Transport {
 		ForceAttemptHTTP2:     true,
 		DisableCompression:    true,
 		MaxIdleConns:          100,
+		MaxConnsPerHost:       20,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 60 * time.Second,
+		ResponseHeaderTimeout: 180 * time.Second,
 	}
 	if p.proxyURL != "" {
 		if u, err := url.Parse(p.proxyURL); err == nil {
