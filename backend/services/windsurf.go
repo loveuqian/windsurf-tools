@@ -142,10 +142,23 @@ func (s *WindsurfService) LoginWithEmail(email, password string) (*FirebaseSignI
 	if firebaseErr == nil {
 		return resp, nil
 	}
-	// Firebase 失败，尝试新 auth1 协议（Windsurf 官网 /_devin-auth/password/login）
-	resp, auth1Err := s.loginAuth1(email, password)
-	if auth1Err == nil {
-		return resp, nil
+	// Firebase 失败，尝试新 auth1 协议（Windsurf 官网 /_devin-auth/password/login）。
+	// windsurf.com 对此端点有限速 (~每 IP 短时间内约 30 次)，并发批量导入时极易 429，
+	// 这里做指数退避重试：2s / 5s / 10s，最多 4 次（含首次）。
+	var auth1Err error
+	backoffs := []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second}
+	for attempt := 0; attempt < len(backoffs)+1; attempt++ {
+		resp, auth1Err = s.loginAuth1(email, password)
+		if auth1Err == nil {
+			return resp, nil
+		}
+		// 仅对 429 退避重试，其他错误（401 密码错、500 等）立即返回
+		if !strings.Contains(auth1Err.Error(), "429") {
+			break
+		}
+		if attempt < len(backoffs) {
+			time.Sleep(backoffs[attempt])
+		}
 	}
 	// 两种协议都失败，返回合并的错误信息
 	return nil, fmt.Errorf("登录失败 — Firebase: %v; auth1: %v", firebaseErr, auth1Err)
