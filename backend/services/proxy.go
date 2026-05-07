@@ -1544,8 +1544,15 @@ func (p *MitmProxy) handleRequest(req *http.Request, origHost string) {
 		return
 	}
 
-	// ★ 快速路径: 身份请求 (GetUserStatus/Ping/...) 直接透传，不读 body，零延迟
+	// ★ 身份请求 (GetUserStatus/Ping/GetProfileData/...) 不需要解析 body 路由，
+	// 但 Authorization 头必须替换为号池 JWT；否则 IDE 原始 token 一旦失效，
+	// 上游会回 401 unauthenticated → IDE 报 "Model provider unreachable"。
 	if !mayHaveConversationID(path) {
+		poolKey, poolJWT := p.pickPoolKeyAndJWT()
+		if poolKey != "" && len(poolJWT) > 0 {
+			req.Header.Set("Authorization", "Bearer "+string(poolJWT))
+			req.Header.Set("X-Pool-Key-Used", poolKey)
+		}
 		return
 	}
 
