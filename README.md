@@ -1,5 +1,6 @@
 # Windsurf Tools 🏄‍♂️
 
+[![Version](https://img.shields.io/badge/Version-v1.0.0-success)](https://github.com/seven7763/windsurf-tools/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue)](#运行环境--prerequisites)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Built with Wails](https://img.shields.io/badge/Built%20with-Wails%20v2-red)](https://wails.io/)
@@ -135,11 +136,75 @@ wails build
 
 ## 🔧 最近修复 | Recent Fixes
 
+### v1.0.0 (2026-05-09)
+
+- **登录路径透传** — 重新设计 MITM 身份注入逻辑：只对承载 `conversation_id` 的路径（`Chat / Cortex / Trajectory`）替换号池身份，其余（`auth_pb` / `seat_management_pb` / `cascade_plugins_pb` / `Ping` / 工作流模板）一律透传 IDE 真实凭据，修复 IDE 报 `failed to validate Devin token: Invalid token` 卡死登录的问题
+- **全部账号显示"当前活跃" Bug** — `PoolKeyInfo` 加 `KeyHash`（sha256 前 12 hex）严格匹配 Email/Nickname；之前 `KeyShort` 截 16 字符对 `devin-session-token$<JWT>` 类账号全部撞车导致全 pool 都贴同一个 Email
+- **Clash IP 轮换徽章状态同步** — toggle 切换立刻进入"启动中…/停止中…"过渡态，自动保存完成后 `fetchClashStatus` 刷新徽章，杜绝"toggle 已开但徽章一直显示已停止"
+- **MITM 前置条件 一键就绪** — `SetupMitmAll` 顺序安装 CA + Hosts，已就绪步骤自动 Skipped 避免重复弹密码框；macOS 弹 Terminal 索取登录密码；失败时返回带平台提示的 hint
+- **每张卡片单独卸载 CA / Hosts** — 卡片右上角垃圾桶图标，二次确认后只卸载这一步，不影响另一步
+
+### v0.x
+
 - **F20/F32 计费字段替换** — 修复原先只替换 api_key+JWT 不替换 UserID/TeamID 导致上游 auth 用号池账号但 billing 仍记登录用户的严重 Bug（`proxy_identity.go`）
 - **macOS 26+ CA 信任** — 改用 Terminal.app 交互式 sudo 走 `security add-trusted-cert`，解决 osascript 无法完整授权的问题
 - **单密码批量特权** — `hosts` / DNS flush / 端口 443 绑定合并进一次弹窗，不再多次输入密码
 - **Clash TUN 模式兼容** — 自动维护 `Merge.yaml` hosts + DIRECT 规则，避免 TUN 接管后绕过 `/etc/hosts`
 - **会话粘性 pool key** — 同一 Cascade conversation 稳定复用同一 pool key，避免 `Invalid Cascade session` 错误
+
+---
+
+## 🔢 版本管理 | Versioning
+
+本仓库遵循 [SemVer](https://semver.org/lang/zh-CN/)：`MAJOR.MINOR.PATCH`。
+
+### 单一事实来源（Single Source of Truth）
+
+版本号在两个地方必须**严格一致**，发版前请同时更新：
+
+| 文件 | 字段 | 用途 |
+|------|------|------|
+| `wails.json` | `info.productVersion` | Wails 打包元数据、macOS `.app` 的 `CFBundleShortVersionString`、Windows 安装包文件版本 |
+| `frontend/package.json` | `version` | Vite 注入 `VITE_APP_VERSION`，前端页脚 / Header 显示 `v<x.y.z>` |
+| `README.md` | 顶部 Version 徽章 | 显示用 |
+
+### 一键校验
+
+任何时候执行：
+```bash
+node -p "JSON.parse(require('fs').readFileSync('wails.json','utf8')).info.productVersion"
+node -p "JSON.parse(require('fs').readFileSync('frontend/package.json','utf8')).version"
+```
+两条输出必须相同；不一致就是 bug。
+
+### 一键升版
+
+仓库自带 `scripts/bump-version.sh`，用 node 严格修改 JSON，避免 sed 误伤：
+```bash
+scripts/bump-version.sh 1.0.1
+```
+执行后两处版本号就同步到了 `1.0.1`。
+
+### 发版流程
+
+1. `scripts/bump-version.sh <x.y.z>` —— 同步 `wails.json` + `frontend/package.json`
+2. 在 `README.md` 顶部 `Version` 徽章 + "最近修复" 段落新增 `### v<x.y.z>` 小节
+3. `git add -A && git commit -m "chore: bump version to v<x.y.z>"`
+4. `git tag v<x.y.z> && git push --tags` —— GitHub Actions `release-windows.yml` 自动构建多平台产物上传 [Releases](https://github.com/seven7763/windsurf-tools/releases)
+5. macOS DMG 用本地命令构建：`wails build -platform darwin/arm64 -clean`，再用 `create-dmg` 打包
+
+---
+
+## 💬 社区交流 | Community
+
+欢迎加入 **AI 的小圈子** 微信交流群，遇到 Bug 优先在群里反馈，作者会更快响应：
+
+| 主群 (互相学习) | 主群备用 | 3 群 |
+| :---: | :---: | :---: |
+| <img src="docs/images/wechat-group-2.jpg" width="220" alt="WeChat Group 主群" /> | <img src="docs/images/wechat-group-1.jpg" width="220" alt="WeChat Group 主群备用" /> | <img src="docs/images/wechat-group-3.jpg" width="220" alt="WeChat Group 3 群" /> |
+
+> 📌 微信群二维码 7 天内有效，过期请进 [Releases](https://github.com/seven7763/windsurf-tools/releases) 拉取最新 README 看新二维码。
+> 🙋 **二维码失效或群已满进不去？** 直接加作者微信 **`Seven77078`**（备注 *Windsurf Tools*），拉你进群。
 
 ---
 
