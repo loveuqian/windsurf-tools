@@ -480,6 +480,20 @@ func TestIsPersistentJWTAccessDeniedDetailTreatsMessageLimitBannerAsNonPersisten
 	}
 }
 
+func TestIsPersistentJWTAccessDeniedDetailTreatsDevinTokenInvalidAsPersistent(t *testing.T) {
+	detail := `code=unauthenticated msg=failed to get primary API key; try logging out and logging in again: failed to validate Devin token: Invalid token`
+	if !isPersistentJWTAccessDeniedDetail(detail) {
+		t.Fatal("isPersistentJWTAccessDeniedDetail() = false, want true for devin token validation failure")
+	}
+}
+
+func TestIsPersistentJWTAccessDeniedDetailTreatsLogOutHintAsPersistent(t *testing.T) {
+	detail := `code=unauthenticated msg=try logging out and logging in again`
+	if !isPersistentJWTAccessDeniedDetail(detail) {
+		t.Fatal("isPersistentJWTAccessDeniedDetail() = false, want true for logout hint")
+	}
+}
+
 func TestIsCascadeSessionFailureDetectsInvalidCascadeSession(t *testing.T) {
 	if !isCascadeSessionFailure("9", "Failed precondition: Invalid Cascade session, please try again", "") {
 		t.Fatal("isCascadeSessionFailure() = false, want true")

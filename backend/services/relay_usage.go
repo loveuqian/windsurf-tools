@@ -262,10 +262,27 @@ func (t *UsageTracker) saveLocked() {
 	_ = os.WriteFile(t.filePath(), data, 0644)
 }
 
-// estimateTokens 粗略估算 token 数（按 4 字符 ≈ 1 token）
+// estimateTokens 粗略估算 token 数
+// 按字符类型分桶：ASCII ~4 字符/token, CJK ~1.5 字符/token, 空白 ~6 字符/token
 func estimateTokens(text string) int {
-	n := len(text) / 4
-	if n == 0 && len(text) > 0 {
+	var asciiChars, cjkChars, spaceChars int
+	for _, r := range text {
+		switch {
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			spaceChars++
+		case r < 0x80:
+			asciiChars++
+		default:
+			cjkChars++
+		}
+	}
+	if asciiChars+cjkChars+spaceChars == 0 {
+		return 0
+	}
+	// tokens ≈ ascii/4 + cjk/1.5 + space/6
+	// 公分母 12: (ascii*3 + cjk*8 + space*2) / 12，+11 做向上取整
+	n := (asciiChars*3 + cjkChars*8 + spaceChars*2 + 11) / 12
+	if n == 0 {
 		n = 1
 	}
 	return n

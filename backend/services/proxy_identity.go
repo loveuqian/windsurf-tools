@@ -449,14 +449,16 @@ func replaceMetadataFields(metaBytes []byte, newKey []byte, newJWT []byte, rando
 				modified = true
 				continue
 			}
-			// ★ F3 = devin-session-token$<JWT>（IDE 登录后真实用这个做 auth）
-			// 必须替换为号池 sk-ws-* key 或 devin-session-token$<新鲜JWT>。
+			// ★ devin-session-token$<JWT> 字段（任意 field number）——
+			// IDE 登录后真实用 F3 做 auth，但重试时 handleRequest 已将其他
+			// sk-ws-* 字段也替换为 devin-session-token$<oldJWT>，所以必须
+			// 在所有 field number 上匹配，避免重试时遗漏旧 JWT。
 			// 注意：用 freshNewKey 而非 newKey ——
 			// pool 里存的 devin-session-token 内嵌的是导入时的旧 JWT，会过期；
 			// 必须用刚 mint 的 newJWT 重组，否则 F3 / F21 / Authorization 三者的
 			// JWT 不一致，上游间歇性返回 "Model provider unreachable"。
-			if f.FieldNum == 3 && bytes.HasPrefix(f.Bytes, []byte("devin-session-token$")) {
-				newFields = append(newFields, protoFieldRaw{FieldNum: 3, WireType: 2, Bytes: freshNewKey})
+			if bytes.HasPrefix(f.Bytes, []byte("devin-session-token$")) {
+				newFields = append(newFields, protoFieldRaw{FieldNum: f.FieldNum, WireType: 2, Bytes: freshNewKey})
 				modified = true
 				continue
 			}

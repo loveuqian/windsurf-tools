@@ -50,7 +50,7 @@ const boundSessions = computed(() => {
 </script>
 
 <template>
-  <nav class="w-60 h-full ios-glass border-r flex flex-col pt-6 pb-6 z-40 shrink-0">
+  <nav class="w-60 h-full ios-glass border-r border-ios-divider dark:border-ios-dividerDark flex flex-col pt-6 pb-6 z-40 shrink-0">
     <div class="px-5 pb-2 mb-2 text-xs font-semibold uppercase text-ios-textSecondary dark:text-ios-textSecondaryDark tracking-wider">
       导航
     </div>

@@ -34,6 +34,8 @@ export function GetAllAccounts():Promise<Array<models.Account>>;
 
 export function GetCaptureDir():Promise<string>;
 
+export function GetClashRotatorRunning():Promise<boolean>;
+
 export function GetMitmCAPath():Promise<string>;
 
 export function GetMitmDebugDumpEnabled():Promise<boolean>;
@@ -70,6 +72,8 @@ export function ImportByJWT(arg1:Array<main.JWTItem>):Promise<Array<main.ImportR
 
 export function ImportByRefreshToken(arg1:Array<main.TokenItem>):Promise<Array<main.ImportResult>>;
 
+export function ListClashGroupNodes(arg1:string,arg2:string,arg3:string):Promise<Array<string>>;
+
 export function RefreshAccountQuota(arg1:string):Promise<void>;
 
 export function RefreshAllQuotas():Promise<Record<string, string>>;
@@ -98,9 +102,13 @@ export function SwitchMitmToNext():Promise<string>;
 
 export function TeardownMitm():Promise<void>;
 
+export function TestClashController(arg1:string,arg2:string):Promise<services.ClashProbeResult>;
+
 export function ToggleMitmDebugDump(arg1:boolean):Promise<void>;
 
 export function ToggleMitmFullCapture(arg1:boolean):Promise<void>;
+
+export function TriggerClashRotate():Promise<boolean>;
 
 export function UnbindMitmSession(arg1:string):Promise<boolean>;
 

@@ -48,6 +48,26 @@ type Settings struct {
 	OpenAIRelayPort int `json:"openai_relay_port"`
 	// OpenAIRelaySecret Bearer token 鉴权密钥（空则不鉴权）
 	OpenAIRelaySecret string `json:"openai_relay_secret"`
+
+	// ── Clash IP 轮换 ──
+	// ClashRotateEnabled 通过 Clash/Mihomo external-controller 周期性切换出站节点（换 IP 防限速）
+	ClashRotateEnabled bool `json:"clash_rotate_enabled"`
+	// ClashControllerURL Clash 外部控制器地址，如 http://127.0.0.1:9097 (Verge) 或 :9090 (Mihomo)
+	ClashControllerURL string `json:"clash_controller_url"`
+	// ClashSecret 外部控制器 secret（可空）
+	ClashSecret string `json:"clash_secret"`
+	// ClashGroup selector 类型的代理组名，例如 "PROXY" 或 "🚀 节点选择"
+	ClashGroup string `json:"clash_group"`
+	// ClashNodes 白名单节点名（逗号分隔）；为空则使用组内全部节点
+	ClashNodes string `json:"clash_nodes"`
+	// ClashIntervalMinutes 轮换间隔（分钟），范围 [2,60]，默认 8
+	ClashIntervalMinutes int `json:"clash_interval_minutes"`
+	// ClashRotateOnRateLimit 检测到上游 rate-limit 时立即切换节点
+	ClashRotateOnRateLimit bool `json:"clash_rotate_on_rate_limit"`
+	// ClashLatencyTestURL 测速用 URL，默认 http://www.gstatic.com/generate_204
+	ClashLatencyTestURL string `json:"clash_latency_test_url"`
+	// ClashLatencyMaxMs 仅保留延迟 <= 该值的节点（>0 生效；0=跳过测速）
+	ClashLatencyMaxMs int `json:"clash_latency_max_ms"`
 }
 
 func DefaultSettings() Settings {
@@ -77,5 +97,14 @@ func DefaultSettings() Settings {
 		OpenAIRelayEnabled:         false,
 		OpenAIRelayPort:            8787,
 		OpenAIRelaySecret:          "",
+		ClashRotateEnabled:         false,
+		ClashControllerURL:         "http://127.0.0.1:9097",
+		ClashSecret:                "",
+		ClashGroup:                 "",
+		ClashNodes:                 "",
+		ClashIntervalMinutes:       8,
+		ClashRotateOnRateLimit:     true,
+		ClashLatencyTestURL:        "http://www.gstatic.com/generate_204",
+		ClashLatencyMaxMs:          800,
 	}
 }

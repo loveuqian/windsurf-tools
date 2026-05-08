@@ -54,6 +54,15 @@ export function createDefaultSettings(): models.Settings {
     static_cache_intercept: true,
     mitm_full_capture: false,
     mitm_debug_dump: false,
+    clash_rotate_enabled: false,
+    clash_controller_url: 'http://127.0.0.1:9097',
+    clash_secret: '',
+    clash_group: '',
+    clash_nodes: '',
+    clash_interval_minutes: 8,
+    clash_rotate_on_rate_limit: true,
+    clash_latency_test_url: 'http://www.gstatic.com/generate_204',
+    clash_latency_max_ms: 800,
   })
 }
 
@@ -86,6 +95,16 @@ export function normalizeSettings(raw: unknown): models.Settings {
     static_cache_intercept: 'static_cache_intercept' in s ? Boolean(s.static_cache_intercept) : true,
     mitm_full_capture: 'mitm_full_capture' in s ? Boolean(s.mitm_full_capture) : false,
     mitm_debug_dump: 'mitm_debug_dump' in s ? Boolean(s.mitm_debug_dump) : false,
+    clash_rotate_enabled: 'clash_rotate_enabled' in s ? Boolean(s.clash_rotate_enabled) : false,
+    clash_controller_url: 'clash_controller_url' in s ? String(s.clash_controller_url || '') : 'http://127.0.0.1:9097',
+    clash_secret: String(s.clash_secret ?? ''),
+    clash_group: String(s.clash_group ?? ''),
+    clash_nodes: String(s.clash_nodes ?? ''),
+    clash_interval_minutes: clampClashInterval(Number(s.clash_interval_minutes ?? 8)),
+    clash_rotate_on_rate_limit:
+      'clash_rotate_on_rate_limit' in s ? Boolean(s.clash_rotate_on_rate_limit) : true,
+    clash_latency_test_url: String(s.clash_latency_test_url ?? 'http://www.gstatic.com/generate_204'),
+    clash_latency_max_ms: Math.max(0, Math.min(10000, Number(s.clash_latency_max_ms ?? 800))),
   })
 }
 
@@ -146,6 +165,14 @@ export function clampHotPollSeconds(sec: number): number {
   return Math.min(60, Math.max(5, Math.round(sec)))
 }
 
+/** Clash 轮换间隔（分钟），与后端 ClashRotator 限制一致 [2,60] */
+export function clampClashInterval(min: number): number {
+  if (!Number.isFinite(min) || min <= 0) {
+    return 8
+  }
+  return Math.min(60, Math.max(2, Math.round(min)))
+}
+
 /** 与后端 JSON 字段一致，便于 reactive + v-model */
 export type SettingsForm = {
   concurrent_limit: number
@@ -179,6 +206,16 @@ export type SettingsForm = {
   mitm_full_capture: boolean
   /** MITM protobuf dump 诊断 */
   mitm_debug_dump: boolean
+  /** Clash IP 轮换 */
+  clash_rotate_enabled: boolean
+  clash_controller_url: string
+  clash_secret: string
+  clash_group: string
+  clash_nodes: string
+  clash_interval_minutes: number
+  clash_rotate_on_rate_limit: boolean
+  clash_latency_test_url: string
+  clash_latency_max_ms: number
 }
 
 export function settingsToForm(s: models.Settings): SettingsForm {
@@ -202,6 +239,17 @@ export function settingsToForm(s: models.Settings): SettingsForm {
     static_cache_intercept: (s as any).static_cache_intercept !== false,
     mitm_full_capture: (s as any).mitm_full_capture === true,
     mitm_debug_dump: (s as any).mitm_debug_dump === true,
+    clash_rotate_enabled: (s as any).clash_rotate_enabled === true,
+    clash_controller_url: String((s as any).clash_controller_url ?? 'http://127.0.0.1:9097'),
+    clash_secret: String((s as any).clash_secret ?? ''),
+    clash_group: String((s as any).clash_group ?? ''),
+    clash_nodes: String((s as any).clash_nodes ?? ''),
+    clash_interval_minutes: clampClashInterval(Number((s as any).clash_interval_minutes ?? 8)),
+    clash_rotate_on_rate_limit: (s as any).clash_rotate_on_rate_limit !== false,
+    clash_latency_test_url: String(
+      (s as any).clash_latency_test_url ?? 'http://www.gstatic.com/generate_204',
+    ),
+    clash_latency_max_ms: Math.max(0, Math.min(10000, Number((s as any).clash_latency_max_ms ?? 800))),
   }
 }
 
@@ -226,6 +274,15 @@ export function formToSettings(form: SettingsForm): models.Settings {
     static_cache_intercept: form.static_cache_intercept,
     mitm_full_capture: form.mitm_full_capture,
     mitm_debug_dump: form.mitm_debug_dump,
+    clash_rotate_enabled: form.clash_rotate_enabled,
+    clash_controller_url: (form.clash_controller_url ?? '').trim(),
+    clash_secret: (form.clash_secret ?? '').trim(),
+    clash_group: (form.clash_group ?? '').trim(),
+    clash_nodes: (form.clash_nodes ?? '').trim(),
+    clash_interval_minutes: clampClashInterval(form.clash_interval_minutes),
+    clash_rotate_on_rate_limit: form.clash_rotate_on_rate_limit,
+    clash_latency_test_url: (form.clash_latency_test_url ?? '').trim() || 'http://www.gstatic.com/generate_204',
+    clash_latency_max_ms: Math.max(0, Math.min(10000, Math.round(form.clash_latency_max_ms) || 0)),
   })
 }
 

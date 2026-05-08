@@ -122,6 +122,36 @@ html.dark .app-root {
   }
 }
 
+/* Dark mode scrollbar */
+html.dark ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+html.dark ::-webkit-scrollbar-track {
+  background: transparent;
+}
+html.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Fix form elements in dark mode */
+html.dark select,
+html.dark textarea,
+html.dark input[type="number"],
+html.dark input[type="search"] {
+  color-scheme: dark;
+}
+
+/* Fix input placeholder in dark mode */
+html.dark input::placeholder,
+html.dark textarea::placeholder {
+  color: rgba(235, 235, 245, 0.4);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ios-skeleton {
     animation: none;

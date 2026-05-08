@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"windsurf-tools-wails/backend/utils"
 )
@@ -299,6 +300,16 @@ type MitmProxy struct {
 	// 上一次因 rate limit 触发轮转的时间；短时间内并发命中限速只切一次号，
 	// 避免连锁烧 key。受 mu 保护。
 	lastRateLimitRotateAt time.Time
+
+	// ── Clash IP 轮换钩子 ──
+	// inFlightChatStreams: 当前进行中的 chat-path 请求数（atomic），
+	// ClashRotator 据此判断是否空闲以避免切换瞬间断流。
+	inFlightChatStreams int64
+	// onUpstreamRateLimit: 检测到上游 rate-limit / global rate-limit 时的回调。
+	// App 层用来通知 ClashRotator 立即换 IP。
+	onUpstreamRateLimit func(detail string)
+	// upstreamBase: 出站 transport（持有以便 CloseIdleConnections 后强制重建连接）
+	upstreamBase *http.Transport
 }
 
 var injectCodeiumConfigFn = InjectCodeiumConfig
@@ -459,6 +470,29 @@ func (p *MitmProxy) SetOnCurrentKeyChanged(fn func(apiKey, reason string)) {
 	p.mu.Lock()
 	p.onCurrentKeyChanged = fn
 	p.mu.Unlock()
+}
+
+// SetOnUpstreamRateLimit 设置上游 rate-limit 回调（App 层用来通知 ClashRotator 立即换 IP）。
+func (p *MitmProxy) SetOnUpstreamRateLimit(fn func(detail string)) {
+	p.mu.Lock()
+	p.onUpstreamRateLimit = fn
+	p.mu.Unlock()
+}
+
+// InFlightChatStreams 返回当前进行中的 chat-path 请求数（用于 Clash 切换前空闲判定）。
+func (p *MitmProxy) InFlightChatStreams() int64 {
+	return atomic.LoadInt64(&p.inFlightChatStreams)
+}
+
+// CloseUpstreamIdleConnections 关闭出站 transport 的空闲连接池。
+// Clash 切换节点后调用，强制下一请求重建连接走新 IP（避免 HTTP/2 复用旧链路）。
+func (p *MitmProxy) CloseUpstreamIdleConnections() {
+	p.mu.RLock()
+	t := p.upstreamBase
+	p.mu.RUnlock()
+	if t != nil {
+		t.CloseIdleConnections()
+	}
 }
 
 func (p *MitmProxy) markRuntimeExhaustedAndRotate(usedKey, detail string) string {
@@ -759,7 +793,6 @@ func (p *MitmProxy) recordUpstreamFailure(kind upstreamFailureKind, detail, apiK
 		return
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.lastErrorKind = string(kind)
 	p.lastErrorSummary = strings.TrimSpace(detail)
 	p.lastErrorAt = time.Now().Format(time.RFC3339)
@@ -767,6 +800,13 @@ func (p *MitmProxy) recordUpstreamFailure(kind upstreamFailureKind, detail, apiK
 		p.lastErrorKey = apiKey[:minStr(12, len(apiKey))]
 	} else {
 		p.lastErrorKey = ""
+	}
+	rlCb := p.onUpstreamRateLimit
+	p.mu.Unlock()
+
+	// 限速类错误同步通知 ClashRotator 立即换 IP（rotator 内部 debounce）
+	if rlCb != nil && (kind == upstreamFailureRateLimit || kind == upstreamFailureGlobalRateLimit) {
+		go rlCb(strings.TrimSpace(detail))
 	}
 }
 
@@ -1462,6 +1502,10 @@ func (rt *retryTransport) checkExhausted(textLower string) bool {
 }
 
 func (p *MitmProxy) newReverseProxy() *httputil.ReverseProxy {
+	base := p.buildUpstreamTransport()
+	p.mu.Lock()
+	p.upstreamBase = base
+	p.mu.Unlock()
 	return &httputil.ReverseProxy{
 		FlushInterval: -1,
 		Director: func(req *http.Request) {
@@ -1481,7 +1525,7 @@ func (p *MitmProxy) newReverseProxy() *httputil.ReverseProxy {
 			req.Host = origHost // 用原始域名作为 Host 头
 		},
 		Transport: &retryTransport{
-			base:     p.buildUpstreamTransport(),
+			base:     base,
 			proxy:    p,
 			maxRetry: defaultReplayBudget,
 		},
@@ -1501,6 +1545,11 @@ func (p *MitmProxy) serve() {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if p.tryServeStaticCache(w, r) {
 			return
+		}
+		// ★ 统计进行中的 chat 请求 → ClashRotator 切节点前会等空闲，避免断流
+		if isChatPath(r.URL.Path) {
+			atomic.AddInt64(&p.inFlightChatStreams, 1)
+			defer atomic.AddInt64(&p.inFlightChatStreams, -1)
 		}
 		proxy.ServeHTTP(w, r)
 	})
@@ -2851,7 +2900,9 @@ func isPersistentJWTAccessDeniedDetail(detail string) bool {
 		strings.Contains(lower, "[permission_denied]") ||
 		strings.Contains(lower, "permission_denied") ||
 		strings.Contains(lower, "user is disabled in windsurf team") ||
-		strings.Contains(lower, "subscription is not active")
+		strings.Contains(lower, "subscription is not active") ||
+		strings.Contains(lower, "failed to validate devin token") ||
+		strings.Contains(lower, "try logging out and logging in")
 }
 
 func (p *MitmProxy) prefetchSpecificJWTs(keys []string, force bool) {

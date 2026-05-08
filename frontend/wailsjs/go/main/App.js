@@ -62,6 +62,10 @@ export function GetCaptureDir() {
   return window['go']['main']['App']['GetCaptureDir']();
 }
 
+export function GetClashRotatorRunning() {
+  return window['go']['main']['App']['GetClashRotatorRunning']();
+}
+
 export function GetMitmCAPath() {
   return window['go']['main']['App']['GetMitmCAPath']();
 }
@@ -134,6 +138,10 @@ export function ImportByRefreshToken(arg1) {
   return window['go']['main']['App']['ImportByRefreshToken'](arg1);
 }
 
+export function ListClashGroupNodes(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ListClashGroupNodes'](arg1, arg2, arg3);
+}
+
 export function RefreshAccountQuota(arg1) {
   return window['go']['main']['App']['RefreshAccountQuota'](arg1);
 }
@@ -190,12 +198,20 @@ export function TeardownMitm() {
   return window['go']['main']['App']['TeardownMitm']();
 }
 
+export function TestClashController(arg1, arg2) {
+  return window['go']['main']['App']['TestClashController'](arg1, arg2);
+}
+
 export function ToggleMitmDebugDump(arg1) {
   return window['go']['main']['App']['ToggleMitmDebugDump'](arg1);
 }
 
 export function ToggleMitmFullCapture(arg1) {
   return window['go']['main']['App']['ToggleMitmFullCapture'](arg1);
+}
+
+export function TriggerClashRotate() {
+  return window['go']['main']['App']['TriggerClashRotate']();
 }
 
 export function UnbindMitmSession(arg1) {

@@ -491,7 +491,7 @@ onMounted(() => {
                 >
                 <span
                   v-else
-                  class="rounded-full bg-gray-500/10 px-1.5 py-0.5 text-[9px] font-bold text-gray-500"
+                  class="rounded-full bg-gray-500/10 px-1.5 py-0.5 text-[9px] font-bold text-gray-500 dark:text-gray-400"
                   >手动</span
                 >
               </div>

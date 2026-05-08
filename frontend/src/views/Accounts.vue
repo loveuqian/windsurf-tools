@@ -939,7 +939,7 @@ const getPlanAccentClass = (acc: models.Account) => {
           v-model="searchQuery"
           type="search"
           placeholder="搜索邮箱、昵称、备注、计划…"
-          class="no-drag-region w-full pl-11 pr-10 py-2.5 rounded-[14px] bg-black/[0.04] border border-black/[0.06] text-[14px] outline-none focus:ring-2 focus:ring-ios-blue/25"
+          class="no-drag-region w-full pl-11 pr-10 py-2.5 rounded-[14px] bg-black/[0.04] border border-black/[0.06] text-[14px] outline-none focus:ring-2 focus:ring-ios-blue/25 dark:bg-white/[0.06] dark:border-white/[0.08] dark:text-gray-100"
         />
         <button
           v-if="searchQuery"
@@ -952,7 +952,7 @@ const getPlanAccentClass = (acc: models.Account) => {
       </div>
       <select
         v-model="accountSort"
-        class="no-drag-region shrink-0 px-4 py-2.5 rounded-[14px] bg-black/[0.04] border border-black/[0.06] text-[13px] font-medium outline-none focus:ring-2 focus:ring-ios-blue/25"
+        class="no-drag-region shrink-0 px-4 py-2.5 rounded-[14px] bg-black/[0.04] border border-black/[0.06] text-[13px] font-medium outline-none focus:ring-2 focus:ring-ios-blue/25 dark:bg-white/[0.06] dark:border-white/[0.08] dark:text-gray-100"
       >
         <option value="group">按分组（默认）</option>
         <option value="name">按邮箱 A→Z</option>
@@ -971,7 +971,7 @@ const getPlanAccentClass = (acc: models.Account) => {
       class="flex flex-col items-center justify-center flex-1 text-ios-textSecondary"
     >
       <div
-        class="w-24 h-24 mb-6 rounded-3xl bg-black/5 flex items-center justify-center"
+        class="w-24 h-24 mb-6 rounded-3xl bg-black/5 dark:bg-white/5 flex items-center justify-center"
       >
         <Users class="w-12 h-12 opacity-50" />
       </div>

@@ -366,7 +366,7 @@ func TestStreamResponse_EmitsSSEChunks(t *testing.T) {
 	)))
 	w := httptest.NewRecorder()
 
-	kind, detail := relay.streamResponse(w, newRelayHTTPResponse(body, nil), "chat-1", "cascade")
+	_, kind, detail := relay.streamResponse(w, newRelayHTTPResponse(body, nil), "chat-1", "cascade")
 	if kind != upstreamFailureNone {
 		t.Fatalf("streamResponse() kind = %q detail=%q, want none", kind, detail)
 	}
@@ -399,7 +399,7 @@ func TestStreamResponse_HandlesSplitFrameAcrossReads(t *testing.T) {
 	})
 	w := httptest.NewRecorder()
 
-	kind, detail := relay.streamResponse(w, newRelayHTTPResponse(body, nil), "chat-2", "cascade")
+	_, kind, detail := relay.streamResponse(w, newRelayHTTPResponse(body, nil), "chat-2", "cascade")
 	if kind != upstreamFailureNone {
 		t.Fatalf("streamResponse() kind = %q detail=%q, want none", kind, detail)
 	}
@@ -429,7 +429,7 @@ func TestStreamResponse_HandlesCompressedConnectFrames(t *testing.T) {
 	body := io.NopCloser(strings.NewReader(string(stream)))
 	w := httptest.NewRecorder()
 
-	kind, detail := relay.streamResponse(w, newRelayHTTPResponse(body, nil), "chat-compressed", "cascade")
+	_, kind, detail := relay.streamResponse(w, newRelayHTTPResponse(body, nil), "chat-compressed", "cascade")
 	if kind != upstreamFailureNone {
 		t.Fatalf("streamResponse() kind = %q detail=%q, want none", kind, detail)
 	}
@@ -460,7 +460,7 @@ func TestStreamResponse_QuotaTrailerDoesNotEmitDone(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 
-	kind, detail := relay.streamResponse(w, newRelayHTTPResponse(body, trailers), "chat-quota", "cascade")
+	_, kind, detail := relay.streamResponse(w, newRelayHTTPResponse(body, trailers), "chat-quota", "cascade")
 
 	if kind != upstreamFailureQuota {
 		t.Fatalf("streamResponse() kind = %q, want %q", kind, upstreamFailureQuota)
@@ -484,7 +484,7 @@ func TestBlockingResponse_QuotaTrailerReturnsOpenAIError(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 
-	kind, detail := relay.blockingResponse(w, newRelayHTTPResponse(body, trailers), "chat-blocking", "cascade")
+	_, kind, detail := relay.blockingResponse(w, newRelayHTTPResponse(body, trailers), "chat-blocking", "cascade", 0)
 
 	if kind != upstreamFailureQuota {
 		t.Fatalf("blockingResponse() kind = %q, want %q", kind, upstreamFailureQuota)

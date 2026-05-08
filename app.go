@@ -19,6 +19,7 @@ type App struct {
 	windsurfSvc            *services.WindsurfService
 	mitmProxy              *services.MitmProxy
 	openaiRelay            *services.OpenAIRelay
+	clashRotator           *services.ClashRotator
 	usageTracker           *services.UsageTracker
 	cancelAutoRefresh      context.CancelFunc
 	cancelAutoQuotaRefresh context.CancelFunc
@@ -107,6 +108,7 @@ func (a *App) initBackend() error {
 		a.startAutoQuotaRefresh()
 	}
 	a.restartQuotaHotPollIfNeeded()
+	a.applyClashRotatorSettings()
 	return nil
 }
 
@@ -157,5 +159,6 @@ func (a *App) shutdown(ctx context.Context) {
 	if a.openaiRelay != nil {
 		a.openaiRelay.Stop()
 	}
+	a.stopClashRotator()
 	a.cleanupMitmEnvironment()
 }

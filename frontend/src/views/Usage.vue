@@ -402,7 +402,7 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
           <Activity class="w-8 h-8 text-ios-blue" stroke-width="2.4" />
           用量统计
         </h1>
-        <p class="text-[13px] text-gray-500 font-medium mt-3">
+        <p class="text-[13px] text-gray-500 dark:text-gray-400 font-medium mt-3">
           实时监控底层 MITM 代理与 OpenAI Relay 的全量请求日志与 Token 消耗流水。
         </p>
       </div>
@@ -445,7 +445,7 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
           >
             {{ formatCompactToken(summary?.total_requests || 0) }}
           </div>
-          <div class="mt-1 text-[12px] text-gray-500 font-medium">包含出错与未完成</div>
+          <div class="mt-1 text-[12px] text-gray-500 dark:text-gray-400 font-medium">包含出错与未完成</div>
         </div>
 
         <div class="rounded-[24px] border border-blue-500/15 bg-blue-500/[0.04] p-5 shadow-sm ios-glass">
@@ -533,7 +533,7 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
             <h2 class="text-[16px] font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
               <Clock class="w-4 h-4 text-ios-blue" stroke-width="2.4" /> 每日用量统计
             </h2>
-            <span class="text-[12px] font-medium text-gray-500">点击行即可联动筛选明细</span>
+            <span class="text-[12px] font-medium text-gray-500 dark:text-gray-400">点击行即可联动筛选明细</span>
           </div>
           <div class="overflow-x-auto">
             <table class="w-full text-left text-[13px]">
@@ -583,13 +583,13 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
           <div class="px-6 py-5 border-b border-black/[0.04] dark:border-white/[0.04] flex items-center justify-between gap-3">
             <div>
               <h2 class="text-[16px] font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                <Box class="w-4 h-4 text-gray-500" stroke-width="2.4" /> 模型分布
+                <Box class="w-4 h-4 text-gray-500 dark:text-gray-400" stroke-width="2.4" /> 模型分布
               </h2>
-              <p class="mt-1 text-[12px] font-medium text-gray-500">
+              <p class="mt-1 text-[12px] font-medium text-gray-500 dark:text-gray-400">
                 按请求量展示最常用模型与累计 Tokens。
               </p>
             </div>
-            <span class="text-[12px] font-semibold text-gray-400">
+            <span class="text-[12px] font-semibold text-gray-400 dark:text-gray-500">
               {{ formatNumber(modelOptions.length) }} 个模型
             </span>
           </div>
@@ -604,7 +604,7 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
                   <div class="truncate font-mono text-[12px] font-bold text-gray-800 dark:text-gray-100">
                     {{ entry.model }}
                   </div>
-                  <div class="mt-1 text-[12px] text-gray-500">
+                  <div class="mt-1 text-[12px] text-gray-500 dark:text-gray-400">
                     {{ formatNumber(entry.requests) }} 次请求 ·
                     {{ formatCompactToken(entry.tokens) }} Tokens
                   </div>
@@ -621,7 +621,7 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
               </div>
             </div>
           </div>
-          <div v-else class="px-6 py-10 text-center text-[13px] text-gray-500">
+          <div v-else class="px-6 py-10 text-center text-[13px] text-gray-500 dark:text-gray-400">
             暂无模型分布数据。
           </div>
         </div>
@@ -631,10 +631,10 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
         <div class="px-6 py-5 border-b border-black/[0.04] dark:border-white/[0.04] flex items-start justify-between gap-4 flex-wrap">
           <div>
             <h2 class="text-[16px] font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-              <Clock class="w-4 h-4 text-gray-500" stroke-width="2.4" />
+              <Clock class="w-4 h-4 text-gray-500 dark:text-gray-400" stroke-width="2.4" />
               {{ selectedDate ? `${selectedDate} 调用流水` : "近期调用流水" }}
             </h2>
-            <p class="mt-1 text-[12px] font-medium text-gray-500">
+            <p class="mt-1 text-[12px] font-medium text-gray-500 dark:text-gray-400">
               {{ activeFilterLabel }} · {{ visibleRecordHint }}
             </p>
           </div>
@@ -646,7 +646,7 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
             >
               清除筛选
             </button>
-            <span class="text-[12px] font-medium text-gray-500">
+            <span class="text-[12px] font-medium text-gray-500 dark:text-gray-400">
               当前命中 {{ formatNumber(filteredRecords.length) }} 条
             </span>
           </div>
@@ -655,13 +655,13 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
         <div class="px-6 py-4 border-b border-black/[0.04] dark:border-white/[0.04] bg-black/[0.015] dark:bg-white/[0.015]">
           <div class="grid grid-cols-1 xl:grid-cols-[220px_minmax(0,1fr)_220px] gap-3">
             <div class="min-w-0">
-              <div class="text-[11px] font-bold uppercase tracking-[0.1em] text-gray-400 mb-2">
+              <div class="text-[11px] font-bold uppercase tracking-[0.1em] text-gray-400 dark:text-gray-500 mb-2">
                 状态
               </div>
               <ISegmented v-model="statusFilter" :options="STATUS_FILTER_OPTIONS" />
             </div>
             <label class="min-w-0">
-              <div class="text-[11px] font-bold uppercase tracking-[0.1em] text-gray-400 mb-2">
+              <div class="text-[11px] font-bold uppercase tracking-[0.1em] text-gray-400 dark:text-gray-500 mb-2">
                 搜索
               </div>
               <div class="flex items-center gap-2 rounded-[16px] border border-black/[0.06] bg-white/80 px-4 py-3 shadow-sm dark:border-white/[0.08] dark:bg-black/20">
@@ -675,7 +675,7 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
               </div>
             </label>
             <label class="min-w-0">
-              <div class="text-[11px] font-bold uppercase tracking-[0.1em] text-gray-400 mb-2">
+              <div class="text-[11px] font-bold uppercase tracking-[0.1em] text-gray-400 dark:text-gray-500 mb-2">
                 模型
               </div>
               <select
@@ -691,7 +691,7 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
           </div>
         </div>
 
-        <div v-if="filteredRecords.length === 0" class="p-12 text-center text-gray-500">
+        <div v-if="filteredRecords.length === 0" class="p-12 text-center text-gray-500 dark:text-gray-400">
           {{ emptyStateMessage }}
         </div>
 
@@ -747,7 +747,7 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
                 <td class="px-6 py-3.5 whitespace-nowrap text-right font-mono font-bold text-gray-900 dark:text-gray-100">
                   {{ formatNumber(rec.total_tokens) }}
                 </td>
-                <td class="px-6 py-3.5 whitespace-nowrap text-right text-gray-500">
+                <td class="px-6 py-3.5 whitespace-nowrap text-right text-gray-500 dark:text-gray-400">
                   {{ formatDuration(rec.duration_ms) }}
                 </td>
                 <td class="px-6 py-3.5 whitespace-nowrap">
@@ -759,7 +759,7 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
                   <div v-if="rec.api_key_short || rec.error_detail" class="space-y-1">
                     <span
                       v-if="rec.api_key_short"
-                      class="inline-flex font-mono text-[11px] text-gray-500 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded"
+                      class="inline-flex font-mono text-[11px] text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded"
                     >
                       ...{{ rec.api_key_short }}
                     </span>
@@ -771,7 +771,7 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
                       {{ rec.error_detail }}
                     </div>
                   </div>
-                  <span v-else class="text-gray-400">-</span>
+                  <span v-else class="text-gray-400 dark:text-gray-500">-</span>
                 </td>
               </tr>
             </tbody>
@@ -781,7 +781,7 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
             v-if="totalPages > 1"
             class="px-6 py-4 border-t border-black/[0.04] dark:border-white/[0.04] flex items-center justify-between"
           >
-            <div class="text-[12px] text-gray-500">
+            <div class="text-[12px] text-gray-500 dark:text-gray-400">
               显示 {{ (currentPage - 1) * pageSize + 1 }} -
               {{ Math.min(currentPage * pageSize, filteredRecords.length) }} 条，共
               {{ filteredRecords.length }} 条记录

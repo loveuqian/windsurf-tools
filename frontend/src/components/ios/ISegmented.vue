@@ -11,7 +11,7 @@ const activeIndex = computed(() => props.options.findIndex(o => o.value === prop
 </script>
 
 <template>
-  <div class="relative flex items-center bg-black/5 dark:bg-white/10 bg-gray-200/80 p-0.5 rounded-[9px] w-full">
+  <div class="relative flex items-center bg-gray-200/80 dark:bg-white/10 p-0.5 rounded-[9px] w-full">
     <!-- Sliding Selection Highlight -->
     <div 
       class="absolute bg-white dark:bg-[#636366] shadow-sm rounded-[7px] h-[calc(100%-4px)] top-0.5 transition-transform duration-300 ease-[cubic-bezier(0.25,1,0.5,1)]"

@@ -351,10 +351,11 @@ func (r *OpenAIRelay) handleChatCompletions(w http.ResponseWriter, req *http.Req
 
 	var finalKind upstreamFailureKind
 	var finalDetail string
+	var completionTokens int
 	if stream {
-		finalKind, finalDetail = r.streamResponse(w, upstreamResp, chatID, model)
+		completionTokens, finalKind, finalDetail = r.streamResponse(w, upstreamResp, chatID, model)
 	} else {
-		finalKind, finalDetail = r.blockingResponse(w, upstreamResp, chatID, model)
+		completionTokens, finalKind, finalDetail = r.blockingResponse(w, upstreamResp, chatID, model, promptTokens)
 	}
 	r.finalizeRelayOutcome(usedKey, finalKind, finalDetail)
 
@@ -367,8 +368,8 @@ func (r *OpenAIRelay) handleChatCompletions(w http.ResponseWriter, req *http.Req
 		Model:            model,
 		RequestModel:     chatReq.Model,
 		PromptTokens:     promptTokens,
-		CompletionTokens: 0, // 流式模式无法精确计算，由前端估算
-		TotalTokens:      promptTokens,
+		CompletionTokens: completionTokens,
+		TotalTokens:      promptTokens + completionTokens,
 		DurationMs:       time.Since(startTime).Milliseconds(),
 		APIKeyShort:      truncKey(usedKey),
 		Status:           status,
@@ -516,11 +517,11 @@ func (r *OpenAIRelay) sendGRPC(payload []byte, apiKey, jwt string) (*http.Respon
 
 // streamResponse 将 gRPC 流式响应转为 SSE。
 // 返回值用于调用方判断这次流是正常完成，还是在流尾 / trailer 处以 quota/auth/grpc 失败收尾。
-func (r *OpenAIRelay) streamResponse(w http.ResponseWriter, resp *http.Response, chatID, model string) (upstreamFailureKind, string) {
+func (r *OpenAIRelay) streamResponse(w http.ResponseWriter, resp *http.Response, chatID, model string) (int, upstreamFailureKind, string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeOpenAIError(w, 500, "internal", "streaming not supported")
-		return upstreamFailureGRPC, "streaming not supported"
+		return 0, upstreamFailureGRPC, "streaming not supported"
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -532,6 +533,7 @@ func (r *OpenAIRelay) streamResponse(w http.ResponseWriter, resp *http.Response,
 	reader := bufio.NewReaderSize(body, 32768)
 	buf := make([]byte, 0, 65536)
 	sawTerminalFrame := false
+	completionTokens := 0
 
 	for {
 		tmp := make([]byte, 8192)
@@ -557,7 +559,7 @@ func (r *OpenAIRelay) streamResponse(w http.ResponseWriter, resp *http.Response,
 			}
 			if flags&streamEnvelopeEndStream != 0 {
 				if kind, detail := classifyUpstreamFailure("", "", string(decodedPayload)); kind != upstreamFailureNone {
-					return kind, detail
+					return completionTokens, kind, detail
 				}
 				sawTerminalFrame = true
 				continue
@@ -568,6 +570,7 @@ func (r *OpenAIRelay) streamResponse(w http.ResponseWriter, resp *http.Response,
 				continue
 			}
 			if text != "" {
+				completionTokens += estimateTokens(text)
 				chunk := buildSSEChunk(chatID, model, text, false)
 				fmt.Fprintf(w, "data: %s\n\n", chunk)
 				flusher.Flush()
@@ -579,13 +582,13 @@ func (r *OpenAIRelay) streamResponse(w http.ResponseWriter, resp *http.Response,
 
 		if readErr != nil {
 			if readErr != io.EOF {
-				return upstreamFailureGRPC, readErr.Error()
+				return completionTokens, upstreamFailureGRPC, readErr.Error()
 			}
 			if len(buf) > 0 {
-				return upstreamFailureGRPC, "stream ended with incomplete grpc frame"
+				return completionTokens, upstreamFailureGRPC, "stream ended with incomplete grpc frame"
 			}
 			if kind, detail := classifyUpstreamFailure(resp.Trailer.Get("grpc-status"), resp.Trailer.Get("grpc-message"), ""); kind != upstreamFailureNone {
-				return kind, detail
+				return completionTokens, kind, detail
 			}
 			// 正常结束时才向 OpenAI SSE 客户端发 stop + [DONE]。
 			// 这样 quota/auth/trailer 失败不会再伪装成一次成功完成的响应。
@@ -594,21 +597,21 @@ func (r *OpenAIRelay) streamResponse(w http.ResponseWriter, resp *http.Response,
 			fmt.Fprintf(w, "data: %s\n\n", chunk)
 			fmt.Fprintf(w, "data: [DONE]\n\n")
 			flusher.Flush()
-			return upstreamFailureNone, ""
+			return completionTokens, upstreamFailureNone, ""
 		}
 	}
 }
 
 // blockingResponse 收集所有响应后一次性返回
-func (r *OpenAIRelay) blockingResponse(w http.ResponseWriter, resp *http.Response, chatID, model string) (upstreamFailureKind, string) {
+func (r *OpenAIRelay) blockingResponse(w http.ResponseWriter, resp *http.Response, chatID, model string, promptTokens int) (int, upstreamFailureKind, string) {
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		writeOpenAIError(w, 502, "upstream_error", err.Error())
-		return upstreamFailureGRPC, err.Error()
+		return 0, upstreamFailureGRPC, err.Error()
 	}
 	if kind, detail := classifyUpstreamFailure(resp.Trailer.Get("grpc-status"), resp.Trailer.Get("grpc-message"), string(data)); kind != upstreamFailureNone {
 		writeRelayUpstreamFailure(w, kind, detail)
-		return kind, detail
+		return 0, kind, detail
 	}
 
 	frames := ExtractGRPCFrames(data)
@@ -617,6 +620,8 @@ func (r *OpenAIRelay) blockingResponse(w http.ResponseWriter, resp *http.Respons
 		text, _, _ := ParseChatResponseChunk(frame)
 		fullText.WriteString(text)
 	}
+
+	completionTokens := estimateTokens(fullText.String())
 
 	reply := map[string]interface{}{
 		"id":      chatID,
@@ -630,12 +635,12 @@ func (r *OpenAIRelay) blockingResponse(w http.ResponseWriter, resp *http.Respons
 				"finish_reason": "stop",
 			},
 		},
-		"usage": map[string]int{"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+		"usage": map[string]int{"prompt_tokens": promptTokens, "completion_tokens": completionTokens, "total_tokens": promptTokens + completionTokens},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(reply)
-	return upstreamFailureNone, ""
+	return completionTokens, upstreamFailureNone, ""
 }
 
 // ── 辅助 ──

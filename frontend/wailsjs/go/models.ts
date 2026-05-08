@@ -261,6 +261,15 @@ export namespace models {
 	    openai_relay_enabled: boolean;
 	    openai_relay_port: number;
 	    openai_relay_secret: string;
+	    clash_rotate_enabled: boolean;
+	    clash_controller_url: string;
+	    clash_secret: string;
+	    clash_group: string;
+	    clash_nodes: string;
+	    clash_interval_minutes: number;
+	    clash_rotate_on_rate_limit: boolean;
+	    clash_latency_test_url: string;
+	    clash_latency_max_ms: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -293,6 +302,15 @@ export namespace models {
 	        this.openai_relay_enabled = source["openai_relay_enabled"];
 	        this.openai_relay_port = source["openai_relay_port"];
 	        this.openai_relay_secret = source["openai_relay_secret"];
+	        this.clash_rotate_enabled = source["clash_rotate_enabled"];
+	        this.clash_controller_url = source["clash_controller_url"];
+	        this.clash_secret = source["clash_secret"];
+	        this.clash_group = source["clash_group"];
+	        this.clash_nodes = source["clash_nodes"];
+	        this.clash_interval_minutes = source["clash_interval_minutes"];
+	        this.clash_rotate_on_rate_limit = source["clash_rotate_on_rate_limit"];
+	        this.clash_latency_test_url = source["clash_latency_test_url"];
+	        this.clash_latency_max_ms = source["clash_latency_max_ms"];
 	    }
 	}
 
@@ -300,6 +318,22 @@ export namespace models {
 
 export namespace services {
 	
+	export class ClashProbeResult {
+	    ok: boolean;
+	    error?: string;
+	    groups: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ClashProbeResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.error = source["error"];
+	        this.groups = source["groups"];
+	    }
+	}
 	export class MitmProxyEvent {
 	    at: string;
 	    message: string;

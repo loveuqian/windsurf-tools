@@ -48,6 +48,12 @@ export const APIInfo = {
   switchMitmToAccount: AppHooks.SwitchMitmToAccount,
   switchAccountLocal: (AppHooks as any).SwitchAccountLocal,
 
+  // Clash IP 轮换
+  testClashController: (AppHooks as any).TestClashController,
+  listClashGroupNodes: (AppHooks as any).ListClashGroupNodes,
+  triggerClashRotate: (AppHooks as any).TriggerClashRotate,
+  getClashRotatorRunning: (AppHooks as any).GetClashRotatorRunning,
+
   // OpenAI 中转
   startOpenAIRelay: AppHooks.StartOpenAIRelay,
   stopOpenAIRelay: AppHooks.StopOpenAIRelay,

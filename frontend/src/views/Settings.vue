@@ -29,6 +29,9 @@ import {
   RotateCcw,
   Save,
   Radio,
+  Shuffle,
+  Zap,
+  Globe,
 } from "lucide-vue-next";
 import { confirmDialog, showToast } from "../utils/toast";
 import { APIInfo } from "../api/wails";
@@ -209,6 +212,76 @@ const relaySectionRefreshing = computed(
   () => !relaySectionBooting.value && relayLoading.value,
 );
 
+// ── Clash IP 轮换 ──
+const clashRunning = ref(false);
+const clashLoading = ref(false);
+const clashTestResult = ref<string>("");
+const clashTestOk = ref(false);
+const clashNodes = ref<string[]>([]);
+const clashNodesLoading = ref(false);
+
+const fetchClashStatus = async () => {
+  try {
+    const running = await APIInfo.getClashRotatorRunning();
+    clashRunning.value = Boolean(running);
+  } catch {
+    /* ignore */
+  }
+};
+
+void fetchClashStatus();
+
+const handleTestClash = async () => {
+  clashLoading.value = true;
+  clashTestResult.value = "";
+  try {
+    const res = await APIInfo.testClashController(local.clash_controller_url, local.clash_secret);
+    if (res && (res as any).ok) {
+      clashTestOk.value = true;
+      clashTestResult.value = `连接成功 — 版本: ${(res as any).version || "unknown"}`;
+    } else {
+      clashTestOk.value = false;
+      clashTestResult.value = `连接失败: ${(res as any).error || "未知错误"}`;
+    }
+  } catch (e) {
+    clashTestOk.value = false;
+    clashTestResult.value = `测试异常: ${String(e)}`;
+  } finally {
+    clashLoading.value = false;
+  }
+};
+
+const handleListClashNodes = async () => {
+  if (!local.clash_controller_url) {
+    showToast("请先填写控制器地址", "error");
+    return;
+  }
+  clashNodesLoading.value = true;
+  try {
+    const groupLabel = local.clash_group?.trim() || "GLOBAL";
+    const nodes: string[] = await APIInfo.listClashGroupNodes(local.clash_controller_url, local.clash_secret, local.clash_group);
+    clashNodes.value = nodes || [];
+    if (clashNodes.value.length === 0) {
+      showToast(`代理组「${groupLabel}」下没有可用节点`, "error");
+    } else {
+      showToast(`「${groupLabel}」已获取 ${clashNodes.value.length} 个节点`, "success");
+    }
+  } catch (e) {
+    showToast(`获取节点失败: ${String(e)}`, "error");
+  } finally {
+    clashNodesLoading.value = false;
+  }
+};
+
+const handleTriggerRotate = async () => {
+  try {
+    await APIInfo.triggerClashRotate();
+    showToast("已触发手动轮换", "success");
+  } catch (e) {
+    showToast(`触发失败: ${String(e)}`, "error");
+  }
+};
+
 onUnmounted(() => {
   if (autoSaveDebounceTimer) {
     clearTimeout(autoSaveDebounceTimer);
@@ -231,7 +304,7 @@ onUnmounted(() => {
         >
           MITM 设置
         </h1>
-        <p class="text-[13px] text-gray-500 font-medium mt-3">
+        <p class="text-[13px] text-gray-500 dark:text-gray-400 font-medium mt-3">
           纯 MITM 模式：号池轮换、MITM 代理与 OpenAI Relay；全部设置自动保存
         </p>
       </div>
@@ -506,6 +579,310 @@ onUnmounted(() => {
           </SkeletonOverlay>
         </section>
 
+        <!-- Clash IP 轮换 -->
+        <section>
+          <h2
+            class="text-[13px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-3 px-2"
+          >
+            Clash IP 轮换
+          </h2>
+          <div
+            class="bg-white/70 dark:bg-[#1C1C1E]/70 ios-glass rounded-[24px] border border-black/[0.04] dark:border-white/[0.04] shadow-[0_2px_12px_rgba(0,0,0,0.02)] overflow-hidden"
+          >
+            <!-- 启用开关 -->
+            <div
+              class="p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-black/[0.04] dark:border-white/[0.04]"
+            >
+              <div class="flex-1 pr-4">
+                <div class="flex items-center gap-2">
+                  <div
+                    class="text-[16px] font-bold text-gray-900 dark:text-gray-100 mb-1"
+                  >
+                    启用 Clash IP 自动轮换
+                  </div>
+                  <span
+                    class="rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide"
+                    :class="
+                      clashRunning
+                        ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-slate-500/10 text-slate-700 dark:text-slate-300'
+                    "
+                  >
+                    {{ clashRunning ? "运行中" : "已停止" }}
+                  </span>
+                </div>
+                <div
+                  class="text-[13px] text-gray-500 dark:text-gray-400 leading-relaxed font-medium"
+                >
+                  通过 Clash Verge / Mihomo 外部控制器 REST API
+                  定时切换代理节点，规避因固定 IP 导致的上游限速。
+                </div>
+              </div>
+              <IToggle v-model="local.clash_rotate_enabled" class="shrink-0" />
+            </div>
+
+            <!-- 配置区（仅启用时显示） -->
+            <template v-if="local.clash_rotate_enabled">
+              <div class="p-5 sm:p-6 bg-gray-50/50 dark:bg-black/10 space-y-4 border-b border-black/[0.04] dark:border-white/[0.04]">
+                <div class="flex flex-col sm:flex-row gap-4">
+                  <div class="flex-1 flex flex-col gap-1.5">
+                    <label
+                      class="text-[13px] font-bold text-gray-700 dark:text-gray-300"
+                      >控制器地址</label
+                    >
+                    <input
+                      v-model="local.clash_controller_url"
+                      type="text"
+                      class="no-drag-region bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 px-4 py-2.5 rounded-[12px] font-mono text-[14px] focus:ring-2 focus:ring-ios-blue/30 outline-none transition-shadow"
+                      placeholder="http://127.0.0.1:9097"
+                    />
+                  </div>
+                  <div class="flex-1 flex flex-col gap-1.5">
+                    <label
+                      class="text-[13px] font-bold text-gray-700 dark:text-gray-300"
+                      >Secret（留空不鉴权）</label
+                    >
+                    <input
+                      v-model="local.clash_secret"
+                      type="text"
+                      class="no-drag-region bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 px-4 py-2.5 rounded-[12px] font-mono text-[14px] focus:ring-2 focus:ring-ios-blue/30 outline-none transition-shadow"
+                      placeholder="your-clash-secret"
+                    />
+                  </div>
+                </div>
+
+                <!-- 测试连接 -->
+                <div class="flex items-center gap-3">
+                  <button
+                    type="button"
+                    class="no-drag-region shrink-0 px-4 py-2 rounded-[12px] font-bold text-[13px] ios-btn bg-ios-blue/10 text-ios-blue hover:bg-ios-blue/15 transition-colors disabled:opacity-50"
+                    :disabled="clashLoading"
+                    @click="handleTestClash"
+                  >
+                    <span class="inline-flex items-center gap-1.5">
+                      <Loader2
+                        v-if="clashLoading"
+                        class="w-3.5 h-3.5 ios-spinner"
+                        stroke-width="2.4"
+                      />
+                      <Zap v-else class="w-3.5 h-3.5" stroke-width="2.4" />
+                      测试连接
+                    </span>
+                  </button>
+                  <span
+                    v-if="clashTestResult"
+                    class="text-[12px] font-medium"
+                    :class="
+                      clashTestOk
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-rose-600 dark:text-rose-400'
+                    "
+                  >
+                    {{ clashTestResult }}
+                  </span>
+                </div>
+              </div>
+
+              <!-- 代理组 & 节点白名单 -->
+              <div class="p-5 sm:p-6 space-y-4 border-b border-black/[0.04] dark:border-white/[0.04]">
+                <div class="flex flex-col gap-1.5">
+                  <label
+                    class="text-[13px] font-bold text-gray-700 dark:text-gray-300"
+                    >代理组名称</label
+                  >
+                  <div class="flex items-center gap-2">
+                    <input
+                      v-model="local.clash_group"
+                      type="text"
+                      class="no-drag-region flex-1 bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 px-4 py-2.5 rounded-[12px] font-mono text-[14px] focus:ring-2 focus:ring-ios-blue/30 outline-none transition-shadow"
+                      placeholder="🚀 节点选择"
+                    />
+                    <button
+                      type="button"
+                      class="no-drag-region shrink-0 px-3 py-2.5 rounded-[12px] font-bold text-[12px] ios-btn bg-gray-100 dark:bg-white/5 hover:bg-gray-200/70 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 transition-colors disabled:opacity-50"
+                      :disabled="clashNodesLoading"
+                      @click="handleListClashNodes"
+                    >
+                      <span class="inline-flex items-center gap-1">
+                        <Loader2
+                          v-if="clashNodesLoading"
+                          class="w-3 h-3 ios-spinner"
+                          stroke-width="2.4"
+                        />
+                        <Globe v-else class="w-3 h-3" stroke-width="2.4" />
+                        查看节点
+                      </span>
+                    </button>
+                  </div>
+                  <div
+                    class="text-[12px] text-gray-400 dark:text-gray-500"
+                  >
+                    Clash 中的代理组名称（通常为 Selector 类型），留空使用 GLOBAL。
+                  </div>
+                </div>
+
+                <!-- 节点列表展示 -->
+                <div
+                  v-if="clashNodes.length > 0"
+                  class="rounded-[14px] border border-black/[0.04] dark:border-white/[0.04] bg-white/50 dark:bg-black/20 p-3 max-h-40 overflow-y-auto"
+                >
+                  <div class="text-[11px] font-bold text-gray-400 dark:text-gray-500 mb-2 uppercase tracking-wide">
+                    当前组下 {{ clashNodes.length }} 个节点
+                  </div>
+                  <div class="flex flex-wrap gap-1.5">
+                    <span
+                      v-for="(node, i) in clashNodes"
+                      :key="i"
+                      class="inline-block rounded-full px-2.5 py-1 text-[11px] font-medium bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-gray-400 border border-black/[0.03] dark:border-white/[0.06]"
+                    >
+                      {{ node }}
+                    </span>
+                  </div>
+                </div>
+
+                <div class="flex flex-col gap-1.5">
+                  <label
+                    class="text-[13px] font-bold text-gray-700 dark:text-gray-300"
+                    >节点白名单（每行一个，留空不限）</label
+                  >
+                  <textarea
+                    v-model="local.clash_nodes"
+                    rows="3"
+                    class="no-drag-region bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 px-4 py-2.5 rounded-[12px] font-mono text-[13px] leading-relaxed focus:ring-2 focus:ring-ios-blue/30 outline-none transition-shadow resize-y"
+                    placeholder="🇺🇸 美国 01&#10;🇺🇸 美国 02&#10;🇯🇵 日本 03"
+                  ></textarea>
+                  <div
+                    class="text-[12px] text-gray-400 dark:text-gray-500"
+                  >
+                    仅在这些节点间轮换，留空则使用代理组下全部节点。支持逗号或换行分隔。
+                  </div>
+                </div>
+              </div>
+
+              <!-- 轮换参数 -->
+              <div class="p-5 sm:p-6 space-y-4 border-b border-black/[0.04] dark:border-white/[0.04]">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div class="flex-1 pr-4">
+                    <div
+                      class="text-[15px] font-bold text-gray-900 dark:text-gray-100 mb-1"
+                    >
+                      轮换间隔
+                    </div>
+                    <div
+                      class="text-[13px] text-gray-500 dark:text-gray-400 font-medium"
+                    >
+                      每隔多少分钟自动切换到下一个节点（2~60 分钟）。
+                    </div>
+                  </div>
+                  <div
+                    class="relative shrink-0 flex items-center bg-gray-100 dark:bg-black/20 rounded-[12px] px-3 py-1.5 focus-within:ring-2 focus-within:ring-ios-blue/30 border border-black/5 dark:border-white/5"
+                  >
+                    <input
+                      v-model.number="local.clash_interval_minutes"
+                      type="number"
+                      min="2"
+                      max="60"
+                      class="no-drag-region w-14 text-center bg-transparent border-none text-[15px] font-bold text-gray-900 dark:text-gray-100 outline-none p-0"
+                    />
+                    <span class="text-[13px] font-bold text-gray-400 dark:text-gray-500 ml-1"
+                      >min</span
+                    >
+                  </div>
+                </div>
+
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div class="flex-1 pr-4">
+                    <div
+                      class="text-[15px] font-bold text-gray-900 dark:text-gray-100 mb-1"
+                    >
+                      限速时立即轮换
+                    </div>
+                    <div
+                      class="text-[13px] text-gray-500 dark:text-gray-400 font-medium"
+                    >
+                      检测到上游 429 限速时不等间隔，立刻触发一次切换。
+                    </div>
+                  </div>
+                  <IToggle
+                    v-model="local.clash_rotate_on_rate_limit"
+                    class="shrink-0"
+                  />
+                </div>
+              </div>
+
+              <!-- 延迟测试参数 -->
+              <div class="p-5 sm:p-6 space-y-4 border-b border-black/[0.04] dark:border-white/[0.04]">
+                <div class="flex flex-col sm:flex-row gap-4">
+                  <div class="flex-1 flex flex-col gap-1.5">
+                    <label
+                      class="text-[13px] font-bold text-gray-700 dark:text-gray-300"
+                      >延迟测试 URL</label
+                    >
+                    <input
+                      v-model="local.clash_latency_test_url"
+                      type="text"
+                      class="no-drag-region bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 px-4 py-2.5 rounded-[12px] font-mono text-[13px] focus:ring-2 focus:ring-ios-blue/30 outline-none transition-shadow"
+                      placeholder="http://www.gstatic.com/generate_204"
+                    />
+                  </div>
+                  <div class="w-32 flex flex-col gap-1.5">
+                    <label
+                      class="text-[13px] font-bold text-gray-700 dark:text-gray-300"
+                      >最大延迟</label
+                    >
+                    <div
+                      class="relative flex items-center bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 rounded-[12px] px-3 py-2.5 focus-within:ring-2 focus-within:ring-ios-blue/30"
+                    >
+                      <input
+                        v-model.number="local.clash_latency_max_ms"
+                        type="number"
+                        min="0"
+                        max="10000"
+                        class="no-drag-region w-full bg-transparent border-none text-[14px] font-bold text-gray-900 dark:text-gray-100 outline-none p-0"
+                      />
+                      <span
+                        class="text-[12px] font-bold text-gray-400 dark:text-gray-500 ml-1 shrink-0"
+                        >ms</span
+                      >
+                    </div>
+                  </div>
+                </div>
+                <div
+                  class="text-[12px] text-gray-400 dark:text-gray-500 leading-relaxed"
+                >
+                  切换前会对候选节点做延迟测试，超过阈值的节点将被跳过。设为 0 跳过延迟测试。
+                </div>
+              </div>
+
+              <!-- 手动轮换按钮 -->
+              <div class="p-5 sm:p-6 flex items-center justify-between gap-4">
+                <div class="flex-1 pr-4">
+                  <div
+                    class="text-[15px] font-bold text-gray-900 dark:text-gray-100 mb-1"
+                  >
+                    手动立即轮换
+                  </div>
+                  <div
+                    class="text-[13px] text-gray-500 dark:text-gray-400 font-medium"
+                  >
+                    点击按钮立即切换到下一个节点（无需等待间隔）。
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  class="no-drag-region shrink-0 px-5 py-2.5 rounded-[12px] font-bold text-[13px] ios-btn bg-ios-blue/10 text-ios-blue hover:bg-ios-blue/15 transition-colors"
+                  @click="handleTriggerRotate"
+                >
+                  <span class="inline-flex items-center gap-2">
+                    <Shuffle class="w-4 h-4" stroke-width="2.4" />
+                    立即切换
+                  </span>
+                </button>
+              </div>
+            </template>
+          </div>
+        </section>
+
         <!-- 保活与额度同步 -->
         <section>
           <h2
@@ -577,7 +954,7 @@ onUnmounted(() => {
                   v-if="local.quota_refresh_policy === 'custom'"
                   class="pt-2"
                 >
-                  <label class="text-[12px] text-gray-500 font-bold mb-1 block"
+                  <label class="text-[12px] text-gray-500 dark:text-gray-400 font-bold mb-1 block"
                     >自定义分钟（5~10080）</label
                   >
                   <input
@@ -685,7 +1062,7 @@ onUnmounted(() => {
                   max="60"
                   class="no-drag-region w-14 text-center bg-transparent border-none text-[15px] font-bold text-gray-900 dark:text-gray-100 outline-none p-0"
                 />
-                <span class="text-[13px] font-bold text-gray-400 ml-1"
+                <span class="text-[13px] font-bold text-gray-400 dark:text-gray-500 ml-1"
                   >sec</span
                 >
               </div>
