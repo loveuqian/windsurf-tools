@@ -487,32 +487,36 @@ func TestIsPersistentJWTAccessDeniedDetailTreatsDevinTokenInvalidAsPersistent(t 
 	}
 }
 
-func TestIsLoginOrAuthBootstrapPathClassifiesAuthPbPaths(t *testing.T) {
-	// 必须透传：IDE 用自己的凭据兑换 JWT 的入口，替换身份会导致 "Invalid token"。
-	authPaths := []string{
+func TestIsIdentityPassthroughPathCoversLoginAndUserStatus(t *testing.T) {
+	// 必须透传：IDE 用自己的凭据调，一旦被替换会失败。
+	// seat_management_pb.GetUserStatus 是登录失败那个真实路径(2026-05-09 traffic.log 实测)。
+	passthroughPaths := []string{
+		// 登录入口
 		"/exa.auth_pb.AuthService/GetUserJwt",
 		"/exa.auth_pb.AuthService/RegisterUser",
 		"/exa.auth_pb.AuthService/LoginPasswordless",
 		"/exa.auth_pb.AuthService/Login",
 		"/_backend/exa.auth_pb.AuthService/GetUserJwt",
+		// 用户/套餐状态查询 —— IDE 想看自己的账号
+		"/exa.seat_management_pb.SeatManagementService/GetUserStatus",
+		"/exa.seat_management_pb.SeatManagementService/GetPlanStatus",
 	}
-	for _, p := range authPaths {
-		if !isLoginOrAuthBootstrapPath(p) {
-			t.Errorf("isLoginOrAuthBootstrapPath(%q) = false, want true", p)
+	for _, p := range passthroughPaths {
+		if !isIdentityPassthroughPath(p) {
+			t.Errorf("isIdentityPassthroughPath(%q) = false, want true", p)
 		}
 	}
 
-	// 不应被误判为登录路径：聊天/身份/座席类路径正常走号池替换。
-	nonAuth := []string{
+	// 不应误透传：聊天 / Cortex / Trajectory / 其他 api_server 路径正常走号池替换。
+	nonPassthrough := []string{
 		"/exa.api_server_pb.ApiServerService/GetChatMessage",
-		"/exa.seat_management_pb.SeatManagementService/GetUserStatus",
-		"/exa.seat_management_pb.SeatManagementService/GetPlanStatus",
+		"/exa.api_server_pb.ApiServerService/GetCompletions",
 		"/exa.cortex_pb.CortexService/CreateConversation",
 		"/exa.trajectory_pb.TrajectoryService/RecordTrajectoryStep",
 	}
-	for _, p := range nonAuth {
-		if isLoginOrAuthBootstrapPath(p) {
-			t.Errorf("isLoginOrAuthBootstrapPath(%q) = true, want false", p)
+	for _, p := range nonPassthrough {
+		if isIdentityPassthroughPath(p) {
+			t.Errorf("isIdentityPassthroughPath(%q) = true, want false", p)
 		}
 	}
 }
