@@ -158,6 +158,10 @@ export function SetSilentFromFlag(arg1) {
   return window['go']['main']['App']['SetSilentFromFlag'](arg1);
 }
 
+export function SetupMitmAll() {
+  return window['go']['main']['App']['SetupMitmAll']();
+}
+
 export function SetupMitmCA() {
   return window['go']['main']['App']['SetupMitmCA']();
 }
@@ -216,6 +220,14 @@ export function TriggerClashRotate() {
 
 export function UnbindMitmSession(arg1) {
   return window['go']['main']['App']['UnbindMitmSession'](arg1);
+}
+
+export function UninstallMitmCA() {
+  return window['go']['main']['App']['UninstallMitmCA']();
+}
+
+export function UninstallMitmHosts() {
+  return window['go']['main']['App']['UninstallMitmHosts']();
 }
 
 export function UpdateSettings(arg1) {

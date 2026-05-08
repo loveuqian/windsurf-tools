@@ -128,6 +128,28 @@ export namespace main {
 	        this.auto_fix = source["auto_fix"];
 	    }
 	}
+	export class PrereqStepResult {
+	    step: string;
+	    title: string;
+	    ok: boolean;
+	    skipped: boolean;
+	    error?: string;
+	    hint?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PrereqStepResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.step = source["step"];
+	        this.title = source["title"];
+	        this.ok = source["ok"];
+	        this.skipped = source["skipped"];
+	        this.error = source["error"];
+	        this.hint = source["hint"];
+	    }
+	}
 	export class TokenItem {
 	    token: string;
 	    remark: string;

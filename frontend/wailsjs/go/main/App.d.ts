@@ -82,6 +82,8 @@ export function RefreshAllTokens():Promise<Record<string, string>>;
 
 export function SetSilentFromFlag(arg1:boolean):Promise<void>;
 
+export function SetupMitmAll():Promise<Array<main.PrereqStepResult>>;
+
 export function SetupMitmCA():Promise<void>;
 
 export function SetupMitmHosts():Promise<void>;
@@ -111,5 +113,9 @@ export function ToggleMitmFullCapture(arg1:boolean):Promise<void>;
 export function TriggerClashRotate():Promise<boolean>;
 
 export function UnbindMitmSession(arg1:string):Promise<boolean>;
+
+export function UninstallMitmCA():Promise<void>;
+
+export function UninstallMitmHosts():Promise<void>;
 
 export function UpdateSettings(arg1:models.Settings):Promise<void>;

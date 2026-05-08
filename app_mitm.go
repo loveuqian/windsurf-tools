@@ -189,6 +189,120 @@ func (a *App) SetupMitmHosts() error {
 	return nil
 }
 
+// PrereqStepResult 描述前置条件单步的执行结果（CA / Hosts）。
+type PrereqStepResult struct {
+	Step    string `json:"step"`            // "ca" | "hosts"
+	Title   string `json:"title"`           // 中文步骤名
+	OK      bool   `json:"ok"`              // 是否就绪（成功安装或已就绪）
+	Skipped bool   `json:"skipped"`         // true 表示已就绪未做修改
+	Error   string `json:"error,omitempty"` // 失败原因（原始 message）
+	Hint    string `json:"hint,omitempty"`  // 给用户看的修复指引
+}
+
+// SetupMitmAll 顺序执行 CA + Hosts 安装，返回逐步结果。
+// 已就绪的步骤会被标记 Skipped=true，避免重复弹密码框。
+// CA 失败时会跳过 Hosts —— 没有信任的 CA，hosts 劫持没有意义。
+func (a *App) SetupMitmAll() []PrereqStepResult {
+	results := make([]PrereqStepResult, 0, 2)
+
+	// ① CA
+	caStep := PrereqStepResult{Step: "ca", Title: "CA 证书"}
+	if services.IsCAInstalled() {
+		caStep.OK = true
+		caStep.Skipped = true
+	} else {
+		if err := a.SetupMitmCA(); err != nil {
+			caStep.Error = err.Error()
+			caStep.Hint = prereqCAHint(err)
+		} else {
+			caStep.OK = true
+		}
+	}
+	results = append(results, caStep)
+
+	// ② Hosts —— CA 失败时直接跳过
+	hostsStep := PrereqStepResult{Step: "hosts", Title: "Hosts 劫持"}
+	if !caStep.OK {
+		hostsStep.Skipped = true
+		hostsStep.Hint = "CA 未就绪，已跳过 Hosts 配置（先解决 CA 问题再重试）"
+		results = append(results, hostsStep)
+		return results
+	}
+	if services.IsHostsMapped(services.TargetDomain) {
+		hostsStep.OK = true
+		hostsStep.Skipped = true
+	} else {
+		if err := a.SetupMitmHosts(); err != nil {
+			hostsStep.Error = err.Error()
+			hostsStep.Hint = prereqHostsHint(err)
+		} else {
+			hostsStep.OK = true
+		}
+	}
+	results = append(results, hostsStep)
+	return results
+}
+
+// UninstallMitmCA 仅卸载 CA 信任，不动 hosts/proxy。
+func (a *App) UninstallMitmCA() error {
+	err := services.UninstallCA()
+	services.InvalidateCACache()
+	return err
+}
+
+// UninstallMitmHosts 仅移除 hosts 劫持和 ProxyOverride（Windows），不动 CA。
+func (a *App) UninstallMitmHosts() error {
+	if err := services.RemoveHostsEntry(services.TargetDomain); err != nil {
+		return err
+	}
+	_ = services.RemoveProxyOverride()
+	return nil
+}
+
+// prereqCAHint 根据 CA 安装错误生成可操作的修复指引。
+func prereqCAHint(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.ToLower(err.Error())
+	switch runtime.GOOS {
+	case "darwin":
+		if strings.Contains(msg, "timeout") || strings.Contains(msg, "未在终端窗口完成信任安装") {
+			return "终端密码超时未输入。请重试，并在弹出的 Terminal 窗口里输入登录密码后回车。"
+		}
+		if strings.Contains(msg, "user cancelled") || strings.Contains(msg, "用户取消") {
+			return "你取消了 Terminal 授权弹窗。重试并允许 Terminal.app 打开。"
+		}
+		return "如需手动信任：双击 ~/.windsurf-tools/ca.crt → 钥匙串访问 → 信任 → 始终信任。"
+	case "windows":
+		if strings.Contains(msg, "denied") || strings.Contains(msg, "拒绝") {
+			return "需要管理员权限。请用「以管理员身份运行」启动 Windsurf Tools。"
+		}
+		return "可以手动用 certutil -addstore Root <ca 路径> 安装到「受信任的根证书颁发机构」。"
+	default:
+		return "需要 sudo 权限。请确保 pkexec/sudo 可用，或将 ca.crt 复制到 /usr/local/share/ca-certificates/ 后执行 update-ca-certificates。"
+	}
+}
+
+// prereqHostsHint 根据 hosts 写入错误生成修复指引。
+func prereqHostsHint(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.ToLower(err.Error())
+	switch runtime.GOOS {
+	case "darwin", "linux":
+		if strings.Contains(msg, "permission") || strings.Contains(msg, "denied") {
+			return "/etc/hosts 写入需要管理员密码。重试并在弹出的密码框里输入登录密码。"
+		}
+	case "windows":
+		if strings.Contains(msg, "denied") || strings.Contains(msg, "拒绝") {
+			return "C:\\Windows\\System32\\drivers\\etc\\hosts 需要管理员权限。请「以管理员身份运行」。"
+		}
+	}
+	return "可手动编辑系统 hosts 文件，添加：127.0.0.1 server.self-serve.windsurf.com"
+}
+
 // TeardownMitm removes hosts entry, cleans ProxyOverride, restores Codeium config, and uninstalls CA.
 func (a *App) TeardownMitm() error {
 	var errs []error

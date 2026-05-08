@@ -6,11 +6,15 @@ import {
   CheckCircle,
   KeyRound,
   Link2,
+  Loader2,
   Power,
+  RotateCcw,
   Shield,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
+  Trash2,
+  Wand2,
   Wrench,
   XCircle,
 } from "lucide-vue-next";
@@ -30,6 +34,26 @@ const mitmStore = useMitmStatusStore();
 const status = computed(() => mitmStore.status);
 const loading = ref(false);
 const error = ref("");
+
+// 单步进行中标记 ("ca" | "hosts" | "all" | "uninstall-ca" | "uninstall-hosts" | "")
+const stepBusy = ref<string>("");
+// 最近一次 SetupMitmAll 的逐步结果（含 hint），用于展示给用户
+type PrereqStepResult = {
+  step: string;
+  title: string;
+  ok: boolean;
+  skipped: boolean;
+  error?: string;
+  hint?: string;
+};
+const prereqResults = ref<PrereqStepResult[]>([]);
+const lastResultByStep = computed<Record<string, PrereqStepResult | undefined>>(
+  () => {
+    const map: Record<string, PrereqStepResult | undefined> = {};
+    for (const r of prereqResults.value) map[r.step] = r;
+    return map;
+  },
+);
 
 const poolCount = computed(() => status.value?.pool_status?.length ?? 0);
 const totalReqs = computed(() => status.value?.total_requests ?? 0);
@@ -183,31 +207,129 @@ const handleSwitchToNext = async () => {
   }
 };
 
+// 检测是否是 macOS（用 navigator.platform 而非 IDE 平台 — 决定 toast 文案）
+const isMac =
+  typeof navigator !== "undefined" &&
+  /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+
 const handleSetupCA = async () => {
   loading.value = true;
+  stepBusy.value = "ca";
   error.value = "";
+  if (isMac) {
+    showToast(
+      "正在弹出 Terminal 安装 CA 信任，请在终端窗口里输入登录密码后回车",
+      "info",
+    );
+  }
   try {
     await APIInfo.setupMitmCA();
     await fetchStatus(true);
+    // 清掉这一步之前的失败提示
+    prereqResults.value = prereqResults.value.filter((r) => r.step !== "ca");
     showToast("CA 证书已生成并安装到系统信任库", "success");
   } catch (e: any) {
     error.value = `CA 安装失败: ${String(e)}`;
   } finally {
     loading.value = false;
+    stepBusy.value = "";
   }
 };
 
 const handleSetupHosts = async () => {
   loading.value = true;
+  stepBusy.value = "hosts";
   error.value = "";
   try {
     await APIInfo.setupMitmHosts();
     await fetchStatus(true);
+    prereqResults.value = prereqResults.value.filter((r) => r.step !== "hosts");
     showToast("Hosts 已配置", "success");
   } catch (e: any) {
     error.value = `Hosts 配置失败（Linux 会尝试 pkexec/sudo 提权）: ${String(e)}`;
   } finally {
     loading.value = false;
+    stepBusy.value = "";
+  }
+};
+
+// ★ 一键就绪：顺序执行 CA + Hosts，返回逐步结果。已就绪的会被 Skipped。
+const handleSetupAll = async () => {
+  loading.value = true;
+  stepBusy.value = "all";
+  error.value = "";
+  if (isMac) {
+    showToast(
+      "macOS 上 CA 信任会弹出 Terminal 索取登录密码，输入后回车即可",
+      "info",
+    );
+  }
+  try {
+    const results = (await APIInfo.setupMitmAll()) as PrereqStepResult[];
+    prereqResults.value = results;
+    await fetchStatus(true);
+    const failed = results.filter((r) => !r.ok);
+    if (failed.length === 0) {
+      const skippedAll = results.every((r) => r.skipped);
+      showToast(
+        skippedAll ? "前置条件已就绪，无需修改" : "前置条件全部就绪",
+        "success",
+      );
+    } else {
+      // 展示第一个失败步骤的 hint
+      const first = failed[0];
+      error.value = `${first.title}: ${first.error || first.hint || "未提供详细错误"}`;
+    }
+  } catch (e: any) {
+    error.value = `一键就绪失败: ${String(e)}`;
+  } finally {
+    loading.value = false;
+    stepBusy.value = "";
+  }
+};
+
+const handleUninstallCA = async () => {
+  const ok = await confirmDialog(
+    "卸载 CA 信任？卸载后浏览器/IDE 将不再信任本机 MITM 证书",
+    { confirmText: "卸载", cancelText: "取消", destructive: true },
+  );
+  if (!ok) return;
+  loading.value = true;
+  stepBusy.value = "uninstall-ca";
+  error.value = "";
+  try {
+    await APIInfo.uninstallMitmCA();
+    await fetchStatus(true);
+    prereqResults.value = prereqResults.value.filter((r) => r.step !== "ca");
+    showToast("CA 信任已卸载", "success");
+  } catch (e: any) {
+    error.value = `CA 卸载失败: ${String(e)}`;
+  } finally {
+    loading.value = false;
+    stepBusy.value = "";
+  }
+};
+
+const handleUninstallHosts = async () => {
+  const ok = await confirmDialog("移除 Hosts 劫持？流量将不再经本机 MITM", {
+    confirmText: "移除",
+    cancelText: "取消",
+    destructive: true,
+  });
+  if (!ok) return;
+  loading.value = true;
+  stepBusy.value = "uninstall-hosts";
+  error.value = "";
+  try {
+    await APIInfo.uninstallMitmHosts();
+    await fetchStatus(true);
+    prereqResults.value = prereqResults.value.filter((r) => r.step !== "hosts");
+    showToast("Hosts 劫持已移除", "success");
+  } catch (e: any) {
+    error.value = `Hosts 移除失败: ${String(e)}`;
+  } finally {
+    loading.value = false;
+    stepBusy.value = "";
   }
 };
 
@@ -520,79 +642,188 @@ const handleTeardown = async () => {
         </div>
 
         <div class="space-y-3">
-          <div class="flex items-center gap-2">
-            <div
-              class="flex h-8 w-8 items-center justify-center rounded-xl bg-black/[0.04] text-ios-textSecondary dark:bg-white/[0.06] dark:text-ios-textSecondaryDark"
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex items-center gap-2">
+              <div
+                class="flex h-8 w-8 items-center justify-center rounded-xl bg-black/[0.04] text-ios-textSecondary dark:bg-white/[0.06] dark:text-ios-textSecondaryDark"
+              >
+                <Wrench class="h-4 w-4" stroke-width="2.4" />
+              </div>
+              <div>
+                <div
+                  class="text-[13px] font-bold text-ios-text dark:text-ios-textDark"
+                >
+                  前置条件
+                </div>
+                <div
+                  class="text-[11px] text-ios-textSecondary dark:text-ios-textSecondaryDark"
+                >
+                  证书与 hosts 这两步完成后，MITM 路径才会真正接管流量。
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              class="no-drag-region inline-flex items-center gap-2 rounded-full border border-ios-blue/20 bg-ios-blue/[0.08] px-3.5 py-2 text-[12px] font-semibold text-ios-blue transition-colors ios-btn hover:bg-ios-blue/[0.14] disabled:opacity-50 dark:text-blue-300"
+              :disabled="
+                loading ||
+                (status?.ca_installed === true &&
+                  status?.hosts_mapped === true)
+              "
+              :title="
+                status?.ca_installed === true && status?.hosts_mapped === true
+                  ? '前置条件已就绪'
+                  : '顺序安装 CA + Hosts，单次密码弹窗'
+              "
+              @click="handleSetupAll"
             >
-              <Wrench class="h-4 w-4" stroke-width="2.4" />
-            </div>
-            <div>
-              <div
-                class="text-[13px] font-bold text-ios-text dark:text-ios-textDark"
-              >
-                前置条件
-              </div>
-              <div
-                class="text-[11px] text-ios-textSecondary dark:text-ios-textSecondaryDark"
-              >
-                证书与 hosts 这两步完成后，MITM 路径才会真正接管流量。
-              </div>
-            </div>
+              <Loader2
+                v-if="stepBusy === 'all'"
+                class="h-3.5 w-3.5 animate-spin"
+                stroke-width="2.4"
+              />
+              <Wand2 v-else class="h-3.5 w-3.5" stroke-width="2.4" />
+              一键就绪
+            </button>
           </div>
 
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <button
+            <div
               v-for="item in setupCards"
               :key="item.key"
-              type="button"
-              class="no-drag-region flex items-center justify-between rounded-[18px] border px-4 py-3 text-left shadow-sm transition-all ios-btn hover:-translate-y-0.5"
+              class="rounded-[18px] border px-4 py-3 shadow-sm transition-all"
               :class="
                 item.ready
                   ? 'border-emerald-500/15 bg-emerald-500/[0.06]'
                   : 'border-amber-500/15 bg-amber-500/[0.06]'
               "
-              :disabled="loading"
-              @click="item.onClick"
             >
-              <div class="flex min-w-0 items-center gap-3">
-                <div
-                  class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
-                  :class="
-                    item.ready
-                      ? 'bg-emerald-500/12 text-emerald-600 dark:text-emerald-300'
-                      : 'bg-amber-500/12 text-amber-600 dark:text-amber-300'
-                  "
+              <div class="flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  class="no-drag-region flex min-w-0 flex-1 items-center gap-3 text-left ios-btn disabled:opacity-50"
+                  :disabled="loading"
+                  @click="item.onClick"
                 >
-                  <component
-                    :is="item.ready ? CheckCircle : AlertTriangle"
-                    class="h-4.5 w-4.5"
+                  <div
+                    class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+                    :class="
+                      item.ready
+                        ? 'bg-emerald-500/12 text-emerald-600 dark:text-emerald-300'
+                        : 'bg-amber-500/12 text-amber-600 dark:text-amber-300'
+                    "
+                  >
+                    <Loader2
+                      v-if="stepBusy === item.key"
+                      class="h-4.5 w-4.5 animate-spin"
+                      stroke-width="2.4"
+                    />
+                    <component
+                      v-else
+                      :is="item.ready ? CheckCircle : AlertTriangle"
+                      class="h-4.5 w-4.5"
+                      stroke-width="2.4"
+                    />
+                  </div>
+                  <div class="min-w-0">
+                    <div
+                      class="truncate text-[13px] font-bold text-ios-text dark:text-ios-textDark"
+                    >
+                      {{ item.title }}
+                    </div>
+                    <div
+                      class="text-[11px] text-ios-textSecondary dark:text-ios-textSecondaryDark"
+                    >
+                      {{
+                        stepBusy === item.key
+                          ? item.key === "ca" && isMac
+                            ? "等待终端密码…"
+                            : "处理中…"
+                          : item.subtitle
+                      }}
+                    </div>
+                  </div>
+                </button>
+                <div class="flex items-center gap-2 shrink-0">
+                  <span
+                    class="rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide"
+                    :class="
+                      item.ready
+                        ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                    "
+                  >
+                    {{ item.ready ? "READY" : "SETUP" }}
+                  </span>
+                  <button
+                    v-if="item.ready"
+                    type="button"
+                    class="no-drag-region flex h-7 w-7 items-center justify-center rounded-full bg-rose-500/10 text-rose-600 transition-colors hover:bg-rose-500/20 disabled:opacity-50 dark:text-rose-300"
+                    :disabled="loading"
+                    :title="
+                      item.key === 'ca' ? '卸载 CA 信任' : '移除 Hosts 劫持'
+                    "
+                    @click="
+                      item.key === 'ca'
+                        ? handleUninstallCA()
+                        : handleUninstallHosts()
+                    "
+                  >
+                    <Loader2
+                      v-if="stepBusy === `uninstall-${item.key}`"
+                      class="h-3.5 w-3.5 animate-spin"
+                      stroke-width="2.4"
+                    />
+                    <Trash2
+                      v-else
+                      class="h-3.5 w-3.5"
+                      stroke-width="2.4"
+                    />
+                  </button>
+                </div>
+              </div>
+              <!-- 失败/指引提示 (来自 SetupMitmAll 的 hint) -->
+              <div
+                v-if="lastResultByStep[item.key]?.error"
+                class="mt-2.5 rounded-[12px] border border-rose-500/20 bg-rose-500/[0.06] px-3 py-2 text-[11px] leading-relaxed text-rose-700 dark:text-rose-300"
+              >
+                <div class="flex items-start gap-2">
+                  <ShieldAlert
+                    class="mt-0.5 h-3.5 w-3.5 shrink-0"
                     stroke-width="2.4"
                   />
-                </div>
-                <div class="min-w-0">
-                  <div
-                    class="truncate text-[13px] font-bold text-ios-text dark:text-ios-textDark"
-                  >
-                    {{ item.title }}
-                  </div>
-                  <div
-                    class="text-[11px] text-ios-textSecondary dark:text-ios-textSecondaryDark"
-                  >
-                    {{ item.subtitle }}
+                  <div class="min-w-0">
+                    <div class="break-words font-semibold">
+                      {{ lastResultByStep[item.key]?.error }}
+                    </div>
+                    <div
+                      v-if="lastResultByStep[item.key]?.hint"
+                      class="mt-1 break-words opacity-90"
+                    >
+                      {{ lastResultByStep[item.key]?.hint }}
+                    </div>
+                    <button
+                      type="button"
+                      class="no-drag-region mt-1.5 inline-flex items-center gap-1 rounded-full bg-rose-500/12 px-2.5 py-0.5 text-[10px] font-semibold hover:bg-rose-500/20"
+                      :disabled="loading"
+                      @click="item.onClick"
+                    >
+                      <RotateCcw class="h-2.5 w-2.5" stroke-width="2.4" />
+                      重试
+                    </button>
                   </div>
                 </div>
               </div>
-              <span
-                class="rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide"
-                :class="
-                  item.ready
-                    ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                    : 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
+              <div
+                v-else-if="
+                  lastResultByStep[item.key]?.skipped &&
+                  lastResultByStep[item.key]?.ok
                 "
+                class="mt-2.5 rounded-[12px] border border-emerald-500/15 bg-emerald-500/[0.05] px-3 py-1.5 text-[11px] text-emerald-700 dark:text-emerald-300"
               >
-                {{ item.ready ? "READY" : "SETUP" }}
-              </span>
-            </button>
+                已就绪，无需重复安装
+              </div>
+            </div>
           </div>
         </div>
 
