@@ -487,36 +487,41 @@ func TestIsPersistentJWTAccessDeniedDetailTreatsDevinTokenInvalidAsPersistent(t 
 	}
 }
 
-func TestIsIdentityPassthroughPathCoversLoginAndUserStatus(t *testing.T) {
-	// 必须透传：IDE 用自己的凭据调，一旦被替换会失败。
-	// seat_management_pb.GetUserStatus 是登录失败那个真实路径(2026-05-09 traffic.log 实测)。
-	passthroughPaths := []string{
-		// 登录入口
-		"/exa.auth_pb.AuthService/GetUserJwt",
-		"/exa.auth_pb.AuthService/RegisterUser",
-		"/exa.auth_pb.AuthService/LoginPasswordless",
-		"/exa.auth_pb.AuthService/Login",
-		"/_backend/exa.auth_pb.AuthService/GetUserJwt",
-		// 用户/套餐状态查询 —— IDE 想看自己的账号
-		"/exa.seat_management_pb.SeatManagementService/GetUserStatus",
-		"/exa.seat_management_pb.SeatManagementService/GetPlanStatus",
-	}
-	for _, p := range passthroughPaths {
-		if !isIdentityPassthroughPath(p) {
-			t.Errorf("isIdentityPassthroughPath(%q) = false, want true", p)
-		}
-	}
-
-	// 不应误透传：聊天 / Cortex / Trajectory / 其他 api_server 路径正常走号池替换。
-	nonPassthrough := []string{
+func TestMayHaveConversationIDIsTheSingleIdentityInjectionGate(t *testing.T) {
+	// mayHaveConversationID == true  → 注入号池身份（聊天计费 / 会话生命周期）
+	injectPaths := []string{
 		"/exa.api_server_pb.ApiServerService/GetChatMessage",
+		"/exa.api_server_pb.ApiServerService/GetChatMessageBurst",
 		"/exa.api_server_pb.ApiServerService/GetCompletions",
 		"/exa.cortex_pb.CortexService/CreateConversation",
 		"/exa.trajectory_pb.TrajectoryService/RecordTrajectoryStep",
 	}
-	for _, p := range nonPassthrough {
-		if isIdentityPassthroughPath(p) {
-			t.Errorf("isIdentityPassthroughPath(%q) = true, want false", p)
+	for _, p := range injectPaths {
+		if !mayHaveConversationID(p) {
+			t.Errorf("mayHaveConversationID(%q) = false, want true (聊天/会话路径必须替换号池身份)", p)
+		}
+	}
+
+	// mayHaveConversationID == false → 必须透传 IDE 真实凭据
+	// 这些是 2026-05-09 debug.log 实测过被替换会失败的路径：
+	//   - seat_management/GetUserStatus  → 登录卡死(failed to validate Devin token)
+	//   - cascade_plugins/GetAllAcpRegistries → 插件加载失败(同样 Invalid token)
+	//   - api_server/Ping / GetDefaultWorkflowTemplates → 心跳和模板拉取失败
+	//   - auth_pb.AuthService/* → 登录入口本身
+	passthroughPaths := []string{
+		"/exa.auth_pb.AuthService/GetUserJwt",
+		"/exa.auth_pb.AuthService/RegisterUser",
+		"/exa.auth_pb.AuthService/LoginPasswordless",
+		"/exa.seat_management_pb.SeatManagementService/GetUserStatus",
+		"/exa.seat_management_pb.SeatManagementService/GetPlanStatus",
+		"/exa.cascade_plugins_pb.CascadePluginsService/GetAllAcpRegistries",
+		"/exa.api_server_pb.ApiServerService/Ping",
+		"/exa.api_server_pb.ApiServerService/GetDefaultWorkflowTemplates",
+		"/exa.api_server_pb.ApiServerService/GetProfileData",
+	}
+	for _, p := range passthroughPaths {
+		if mayHaveConversationID(p) {
+			t.Errorf("mayHaveConversationID(%q) = true, want false (身份/状态路径必须透传 IDE 凭据)", p)
 		}
 	}
 }

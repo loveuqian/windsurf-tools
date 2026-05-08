@@ -1593,54 +1593,28 @@ func (p *MitmProxy) handleRequest(req *http.Request, origHost string) {
 		return
 	}
 
-	// ★ 身份透传路径必须 100% 保留 IDE 真实凭据 ──
-	//   /exa.auth_pb.AuthService/*               (登录: GetUserJwt/RegisterUser/Login*)
-	//   /exa.seat_management_pb.SeatManagementService/*  (用户/套餐状态: GetUserStatus/GetPlanStatus)
+	// ★ 只有承载 conversation_id 的路径才注入号池身份 ──
 	//
-	// 这些路径 IDE 用自己的 session_token / api_key 调；一旦被替换成号池失效
-	// JWT，上游会回 "failed to validate Devin token: Invalid token"，登录直接失败。
+	// 需要替换：
+	//   - Chat/Completions     (api_server_pb.GetChatMessage / GetCompletions)  → 计费归属号池
+	//   - Cortex / Trajectory  (CortexService / TrajectoryService)              → 会话生命周期
+	//
+	// 一律透传 IDE 真实凭据的路径（mayHaveConversationID == false）：
+	//   - 登录/认证      (auth_pb.AuthService/*)            ← 替换会卡死登录
+	//   - 用户/套餐状态  (seat_management_pb.*/GetUserStatus|GetPlanStatus)
+	//   - 插件注册表     (cascade_plugins_pb.*/GetAllAcpRegistries)
+	//   - 心跳/工作流    (api_server_pb.*/Ping|GetDefaultWorkflowTemplates|...)
+	//   - 用户档案       (GetProfileData)
+	//
+	// 历史教训：commit d322656 把所有非 conv 路径都替换成号池 JWT，目的是隐藏
+	// IDE 缓存 token 过期时的 401。但实测代价是 IDE 永远登不上(GetUserStatus/
+	// GetAllAcpRegistries 用号池失效 JWT 校验 → "failed to validate Devin
+	// token: Invalid token")。回归 6d5fcc4 的设计：身份路径透传，IDE 自己用
+	// auth_pb 续期，号池只接管聊天计费。
 	//
 	// 注意：proxy 自身预取号池 JWT/UserStatus 走 WindsurfService 直连
 	// ResolveUpstreamIP()，不经过 MITM listener，所以这里透传不影响号池流程。
-	if isIdentityPassthroughPath(path) {
-		p.log("身份路径透传(保留IDE凭据): %s", pathTail)
-		return
-	}
-
-	// ★ 身份请求 (GetUserStatus/Ping/GetProfileData/...) 不需要解析 conv_id 路由，
-	// 但 Authorization 头 + body 内身份字段都必须替换为号池 key/JWT；
-	// 仅替换 Authorization 会导致上游回:
-	//   "unauthenticated: API key requires token authentication"
-	// (JWT 属号池 key A，但 body 里 api_key 仍是 IDE 原始 key B → 不匹配)
 	if !mayHaveConversationID(path) {
-		poolKey, poolJWT := p.pickPoolKeyAndJWT()
-		if poolKey == "" || len(poolJWT) == 0 {
-			return
-		}
-		req.Header.Set("Authorization", "Bearer "+string(poolJWT))
-		req.Header.Set("X-Pool-Key-Used", poolKey)
-
-		// 同步替换 body 内身份字段，避免 JWT 与 body 不一致
-		if req.Body == nil {
-			return
-		}
-		bodyBytes, err := io.ReadAll(req.Body)
-		req.Body.Close()
-		if err != nil || len(bodyBytes) == 0 {
-			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-			return
-		}
-		p.mu.RLock()
-		randFP := p.isTrialOrFreeKey(poolKey)
-		fp := p.keyFingerprint(poolKey)
-		p.mu.RUnlock()
-		newBody, replaced := ReplaceIdentityInBody(bodyBytes, []byte(poolKey), poolJWT, randFP, fp)
-		if replaced {
-			req.Body = io.NopCloser(bytes.NewReader(newBody))
-			req.ContentLength = int64(len(newBody))
-		} else {
-			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		}
 		return
 	}
 
@@ -2230,31 +2204,18 @@ func isChatPath(path string) bool {
 
 // mayHaveConversationID returns true for paths that might carry a conversation_id.
 // Chat paths + Cortex/Trajectory session lifecycle paths.
-// Identity paths (GetUserStatus/Ping/GetProfileData/...) return false → skip body parsing.
+//
+// 这是 MITM 是否注入号池身份的唯一总开关：
+//   - true  → 解析 conv_id，按会话粘性绑定号池 key，替换 Authorization+body
+//   - false → 完全透传 IDE 真实凭据(登录/状态/插件/心跳/工作流/档案等)
+//
+// 凡是不在 Chat/Cortex/Trajectory 范畴的路径都返回 false，由 handleRequest
+// 直接 return 透传。曾经的 d322656 在 false 分支强行替换号池身份，导致 IDE
+// 登录、用户状态查询、插件加载全部失效。
 func mayHaveConversationID(path string) bool {
 	return isChatPath(path) ||
 		strings.Contains(path, "Cortex") ||
 		strings.Contains(path, "Trajectory")
-}
-
-// isIdentityPassthroughPath returns true for paths that IDE uses to authenticate
-// itself or query its OWN account/plan info. These MUST pass through unmodified —
-// replacing identity here would break:
-//   - IDE login (auth_pb.AuthService/*: GetUserJwt, RegisterUser, Login*) →
-//     上游会回 "failed to validate Devin token: Invalid token"
-//   - IDE 用户/套餐状态查询 (seat_management_pb.SeatManagementService/*:
-//     GetUserStatus, GetPlanStatus) → 同样的 token 校验失败
-//
-// 实测日志(2026-05-09 traffic.log)：登录失败时上游错误绑定的就是
-// /exa.seat_management_pb.SeatManagementService/GetUserStatus —— IDE 用自己
-// 刚拿到的 session token 调 GetUserStatus，被 MITM 替换成号池失效 JWT，
-// 上游回 "failed to validate Devin token"，IDE 报 "Failed to log in"。
-//
-// 注意：proxy 自身预取号池 JWT/UserStatus 走 WindsurfService 直连
-// ResolveUpstreamIP()，不经过 MITM listener，所以这里透传不影响号池流程。
-func isIdentityPassthroughPath(path string) bool {
-	return strings.Contains(path, "auth_pb.AuthService/") ||
-		strings.Contains(path, "seat_management_pb.SeatManagementService/")
 }
 
 // sessionBindingCount returns how many active sessions are bound to the given key.
