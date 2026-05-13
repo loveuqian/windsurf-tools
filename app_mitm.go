@@ -524,6 +524,29 @@ func (a *App) syncForgeConfig() {
 	})
 }
 
+// syncJailbreakConfig 把当前 settings 里的破限配置推到 MitmProxy。
+// 当 MitmJailbreakOverride 为空时，回退到 services.DefaultJailbreakOverride，
+// 避免「打开开关但没填文本」时静默失效。
+func (a *App) syncJailbreakConfig() {
+	if a.mitmProxy == nil || a.store == nil {
+		return
+	}
+	s := a.store.GetSettings()
+	override := strings.TrimSpace(s.MitmJailbreakOverride)
+	if override == "" {
+		override = services.DefaultJailbreakOverride
+	}
+	a.mitmProxy.SetJailbreakConfig(services.JailbreakConfig{
+		Enabled:  s.MitmJailbreakEnabled,
+		Override: override,
+	})
+}
+
+// GetJailbreakDefaultOverride 暴露默认破限文本给前端，供「恢复默认」按钮使用。
+func (a *App) GetJailbreakDefaultOverride() string {
+	return services.DefaultJailbreakOverride
+}
+
 func (a *App) syncStaticCacheConfig() {
 	if a.mitmProxy == nil || a.store == nil {
 		return

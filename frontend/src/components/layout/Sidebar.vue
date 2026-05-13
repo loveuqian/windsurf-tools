@@ -43,9 +43,18 @@ const activeAccountLabel = computed(() => {
 
 const boundSessions = computed(() => {
   const sessions = mitmStore.status?.active_sessions ?? []
-  const currentKeyShort = activeKey.value?.key_short ?? ''
-  if (!currentKeyShort) return []
-  return sessions.filter((s) => s.pool_key_short === currentKeyShort)
+  // 用 PoolKeyHash 精确匹配；长 token 类账号会让 PoolKeyShort 共享 16 字符
+  // 前缀，跨账号过滤就会"看到不属于自己的会话"。pool_key_hash 是 sha256 前
+  // 12 hex，不会撞车。后端兼容旧字段时退回 pool_key_short 全等匹配。
+  const currentHash = activeKey.value?.key_hash ?? ''
+  const currentShort = activeKey.value?.key_short ?? ''
+  if (!currentHash && !currentShort) return []
+  return sessions.filter((s) => {
+    if (currentHash && s.pool_key_hash) {
+      return s.pool_key_hash === currentHash
+    }
+    return s.pool_key_short === currentShort
+  })
 })
 </script>
 

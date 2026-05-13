@@ -190,7 +190,10 @@ func (r *ClashRotator) rotateOnce(reason string) {
 		r.log("拉取节点失败: %v", err)
 		return
 	}
-	candidates := r.filterCandidates(nodes, current)
+	// 拉一次全量 proxy type 表，用于过滤掉子组(selector/fallback/urltest)
+	// 和伪条目(direct/reject)。失败时降级走纯名字过滤，保证基本可用。
+	kinds, _ := proxyKindMap(r.cfg.ControllerURL, r.cfg.Secret)
+	candidates := r.filterCandidatesWithKinds(nodes, current, kinds)
 	if len(candidates) == 0 {
 		r.log("无可用候选节点 (group=%q nodes=%d whitelist=%d)",
 			r.cfg.Group, len(nodes), len(r.cfg.Whitelist))
@@ -245,6 +248,49 @@ func (r *ClashRotator) waitIdleOrTimeout() {
 	}
 	r.log("等待空闲超时 (%s)，仍有 %d 个进行中流，强切",
 		r.cfg.IdleWaitMax, r.proxy.InFlightChatStreams())
+}
+
+// filterCandidatesWithKinds 是 type-aware 版本：用 Clash /proxies 返回的 type
+// 字段精确剔除子组(selector/fallback/urltest)和伪条目(direct/reject)。
+//
+// 当 kinds 为 nil（探活失败时降级路径），退回到 filterCandidates。
+//
+// 历史 bug：之前 rotator 只看名字，机场把"剩余流量：xx GB"、"套餐到期"、
+// "防失联"等条目以普通节点形式注入到 selector.all，rotator 切到这些条目
+// 时 PUT 成功(group.now 变了)，但下次请求依然走原节点 —— Clash 把这些伪
+// 节点视作 reject 类型。type-aware 过滤直接从源头排除。
+func (r *ClashRotator) filterCandidatesWithKinds(all []string, current string, kinds map[string]string) []string {
+	if kinds == nil {
+		return r.filterCandidates(all, current)
+	}
+	whitelist := map[string]struct{}{}
+	for _, n := range r.cfg.Whitelist {
+		n = strings.TrimSpace(n)
+		if n != "" {
+			whitelist[n] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(all))
+	for _, n := range all {
+		if n == current || n == r.cfg.Group {
+			continue
+		}
+		// 关键：用 type 而非名字判断
+		if !isRealNodeKind(kinds[n]) {
+			continue
+		}
+		// 兜底：名字 heuristic 抓那些被机场伪装成 vmess 的"流量/套餐/广告"条目
+		if isFakeNodeName(n) {
+			continue
+		}
+		if len(whitelist) > 0 {
+			if _, ok := whitelist[n]; !ok {
+				continue
+			}
+		}
+		out = append(out, n)
+	}
+	return out
 }
 
 // filterCandidates 应用白名单 + 排除 group 自身/特殊节点 + 排除 current。

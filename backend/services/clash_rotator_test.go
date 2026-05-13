@@ -46,19 +46,25 @@ func (m *mockClashServer) handler() http.Handler {
 		switch {
 		case path == "/proxies" && r.Method == http.MethodGet:
 			m.mu.Lock()
-			resp := map[string]interface{}{
-				"proxies": map[string]interface{}{
-					"PROXY": map[string]interface{}{
-						"now":  m.now,
-						"all":  m.all,
-						"type": "Selector",
-						"name": "PROXY",
-					},
-					"DIRECT": map[string]interface{}{"type": "Direct"},
+			// 把 group.all 里的成员也注册成真节点（type=vmess），让
+			// type-aware 过滤器能挑出它们。
+			proxies := map[string]interface{}{
+				"PROXY": map[string]interface{}{
+					"now":  m.now,
+					"all":  m.all,
+					"type": "Selector",
+					"name": "PROXY",
 				},
+				"DIRECT": map[string]interface{}{"type": "Direct"},
+				"REJECT": map[string]interface{}{"type": "Reject"},
+			}
+			for _, n := range m.all {
+				if _, exists := proxies[n]; !exists {
+					proxies[n] = map[string]interface{}{"type": "Vmess", "name": n}
+				}
 			}
 			m.mu.Unlock()
-			_ = json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"proxies": proxies})
 		case strings.HasPrefix(path, "/proxies/") && strings.HasSuffix(path, "/delay") && r.Method == http.MethodGet:
 			node := strings.TrimSuffix(strings.TrimPrefix(path, "/proxies/"), "/delay")
 			m.mu.Lock()

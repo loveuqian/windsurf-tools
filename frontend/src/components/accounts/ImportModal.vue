@@ -14,7 +14,6 @@ import {
   Wand2,
   X,
 } from 'lucide-vue-next'
-import { toAPIKeyItems, toEmailPasswordItems, toJWTItems, toTokenItems } from '../../utils/importParse'
 import { groupImportLines, summarizeGrouped, type DetectionSummary } from '../../utils/importAutoDetect'
 import { importBatched } from '../../utils/importBatch'
 import { showToast } from '../../utils/toast'
@@ -30,6 +29,8 @@ const results = ref<main.ImportResult[]>([])
 
 watch(() => props.isOpen, (open: boolean) => {
   if (!open) {
+    // 关闭同时清除输入与结果，避免下次打开看到上次残留
+    inputText.value = ''
     results.value = []
   }
 })
@@ -37,12 +38,18 @@ watch(() => props.isOpen, (open: boolean) => {
 /** 实时检测分类统计 */
 const detectionSummary = computed<DetectionSummary>(() => {
   const lines = inputText.value.split('\n').map(l => l.trim()).filter(Boolean)
-  if (!lines.length) return { api_key: 0, jwt: 0, refresh_token: 0, password: 0, total: 0 }
+  if (!lines.length) {
+    return { api_key: 0, jwt: 0, refresh_token: 0, password: 0, unknown: 0, total: 0 }
+  }
   const grouped = groupImportLines(lines)
   return summarizeGrouped(grouped)
 })
 
 const lineCount = computed(() => detectionSummary.value.total)
+const unknownCount = computed(() => detectionSummary.value.unknown)
+const totalInputLines = computed(
+  () => inputText.value.split('\n').map(l => l.trim()).filter(Boolean).length,
+)
 const successCount = computed(() => results.value.filter((r) => r.success).length)
 const failureCount = computed(() => results.value.filter((r) => !r.success).length)
 
@@ -186,6 +193,14 @@ const handleImport = async () => {
           <div v-else class="text-[12px] text-ios-textSecondary dark:text-ios-textSecondaryDark italic">
             粘贴内容后自动识别类型…
           </div>
+          <div
+            v-if="unknownCount > 0"
+            class="inline-flex items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-3 py-1.5 text-[12px] font-bold text-amber-700 dark:text-amber-300"
+            :title="`${unknownCount} 行无法识别为有效凭证，将被跳过`"
+          >
+            <AlertCircle class="w-3.5 h-3.5" stroke-width="2.4" />
+            <span>{{ unknownCount }} 行未识别</span>
+          </div>
         </div>
 
         <!-- 统计条 -->
@@ -268,7 +283,21 @@ const handleImport = async () => {
         <div class="flex items-center justify-between gap-4">
           <div class="min-w-0">
             <div class="text-[12px] font-semibold text-ios-text dark:text-ios-textDark">
-              {{ lineCount > 0 ? `准备导入 ${lineCount} 条（${activeTypes.map(t => `${t.label} ×${t.count}`).join('、')}）` : '等待粘贴内容' }}
+              <template v-if="lineCount > 0">
+                准备导入 {{ lineCount }} 条（{{ activeTypes.map(t => `${t.label} ×${t.count}`).join('、') }}）<span
+                  v-if="unknownCount > 0"
+                  class="font-medium text-amber-700 dark:text-amber-300"
+                >
+                  · {{ unknownCount }} 行跳过</span
+                >
+              </template>
+              <template v-else-if="totalInputLines > 0">
+                <span class="text-amber-700 dark:text-amber-300">
+                  {{ totalInputLines }} 行均未识别为有效凭证 —
+                  请检查格式（API Key/JWT/邮箱密码/Refresh Token）
+                </span>
+              </template>
+              <template v-else>等待粘贴内容</template>
             </div>
             <div class="text-[11px] text-ios-textSecondary dark:text-ios-textSecondaryDark">
               {{ isLoading ? '正在分批提交并同步账号池…' : '导入完成后会自动刷新账号池列表' }}
@@ -277,7 +306,7 @@ const handleImport = async () => {
           <button
             type="button"
             class="no-drag-region h-[48px] min-w-[144px] px-5 bg-gradient-to-b from-[#3b82f6] to-ios-blue text-white rounded-[16px] font-semibold text-[16px] ios-btn flex items-center justify-center disabled:opacity-50 shadow-md shadow-ios-blue/20 ring-1 ring-black/5 ring-inset active:ring-black/10"
-            :disabled="isLoading || !inputText.trim()"
+            :disabled="isLoading || !inputText.trim() || lineCount === 0"
             @click="handleImport"
           >
             <Loader2 v-if="isLoading" class="w-5 h-5 ios-spinner mr-2" />

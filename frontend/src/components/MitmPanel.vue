@@ -861,7 +861,7 @@ const handleTeardown = async () => {
           <div class="space-y-2 max-h-56 overflow-y-auto pr-1">
             <div
               v-for="k in status!.pool_status"
-              :key="k.key_short"
+              :key="k.key_hash || k.key_short"
               class="flex items-center justify-between gap-3 rounded-[16px] border px-3 py-2.5 text-[12px] font-mono transition-all"
               :class="{
                 'border-emerald-500/15 bg-emerald-500/[0.07]':

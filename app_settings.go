@@ -43,6 +43,7 @@ func (a *App) UpdateSettings(settings models.Settings) error {
 	a.syncMitmPoolKeys()
 	a.syncForgeConfig()
 	a.syncStaticCacheConfig()
+	a.syncJailbreakConfig()
 	a.applyClashRotatorSettings()
 	// 动态切换调试日志
 	if prev.DebugLog != settings.DebugLog {

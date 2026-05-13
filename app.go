@@ -101,6 +101,7 @@ func (a *App) initBackend() error {
 	a.syncMitmPoolKeys()
 	a.syncForgeConfig()
 	a.syncStaticCacheConfig()
+	a.syncJailbreakConfig()
 	if settings.AutoRefreshTokens {
 		a.startAutoRefresh()
 	}

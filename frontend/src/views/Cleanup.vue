@@ -92,7 +92,7 @@ function selectAllSafe() {
 async function fetchDiskUsage() {
   loadingDisk.value = true;
   try {
-    diskUsage.value = await (APIInfo as any).getWindsurfDiskUsage();
+    diskUsage.value = await APIInfo.getWindsurfDiskUsage();
   } catch (e: any) {
     showToast("获取磁盘占用失败: " + e.message, "error");
   } finally {
@@ -103,7 +103,7 @@ async function fetchDiskUsage() {
 async function fetchTips() {
   loadingTips.value = true;
   try {
-    tips.value = await (APIInfo as any).getPerformanceTips();
+    tips.value = await APIInfo.getPerformanceTips();
   } catch (e: any) {
     console.error("GetPerformanceTips error:", e);
   } finally {
@@ -126,9 +126,7 @@ async function cleanSelected() {
   }
   cleaning.value = true;
   try {
-    const results: CleanupResult[] = await (APIInfo as any).cleanupWindsurf(
-      ids,
-    );
+    const results: CleanupResult[] = await APIInfo.cleanupWindsurf(ids);
     lastCleanResults.value = results;
     const totalFreed = results.reduce((s, r) => s + r.freed_bytes, 0);
     showToast(`清理完成，释放 ${humanSize(totalFreed)}`, "success");
@@ -144,9 +142,7 @@ async function cleanSelected() {
 async function quickCleanStartup() {
   cleaning.value = true;
   try {
-    const results: CleanupResult[] = await (
-      APIInfo as any
-    ).cleanupStartupCache();
+    const results: CleanupResult[] = await APIInfo.cleanupStartupCache();
     lastCleanResults.value = results;
     const totalFreed = results.reduce((s, r) => s + r.freed_bytes, 0);
     showToast(`启动缓存已清理，释放 ${humanSize(totalFreed)}`, "success");
@@ -161,9 +157,7 @@ async function quickCleanStartup() {
 async function applyAllFixes() {
   applyingTips.value = true;
   try {
-    const results: Record<string, string> = await (
-      APIInfo as any
-    ).applyAllPerformanceFixes();
+    const results: Record<string, string> = await APIInfo.applyAllPerformanceFixes();
     const applied = Object.values(results).filter(
       (v) => v === "已应用",
     ).length;

@@ -50,12 +50,25 @@ export const APIInfo = {
   switchMitmToNext: AppHooks.SwitchMitmToNext,
   switchMitmToAccount: AppHooks.SwitchMitmToAccount,
   switchAccountLocal: (AppHooks as any).SwitchAccountLocal,
+  // Cascade 破限注入（system prompt 末尾追加 override 文本）
+  getJailbreakDefaultOverride: (AppHooks as any).GetJailbreakDefaultOverride as () => Promise<string>,
 
   // Clash IP 轮换
   testClashController: (AppHooks as any).TestClashController,
   listClashGroupNodes: (AppHooks as any).ListClashGroupNodes,
   triggerClashRotate: (AppHooks as any).TriggerClashRotate,
   getClashRotatorRunning: (AppHooks as any).GetClashRotatorRunning,
+  // 一键智能启用：自动挑 selector 组 + 启 rotator + 立即切一次
+  autoSetupClash: (AppHooks as any).AutoSetupClash as () => Promise<{
+    ok: boolean; error?: string; hint?: string;
+    group?: string; node_count?: number;
+    from?: string; to?: string;
+  }>,
+  autoDetectClashGroup: (AppHooks as any).AutoDetectClashGroup as () => Promise<{
+    ok: boolean; error?: string;
+    group?: string; node_count?: number;
+    candidates?: string[]; all_groups?: string[];
+  }>,
 
   // OpenAI 中转
   startOpenAIRelay: AppHooks.StartOpenAIRelay,

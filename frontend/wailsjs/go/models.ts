@@ -14,6 +14,30 @@ export namespace main {
 	        this.remark = source["remark"];
 	    }
 	}
+	export class AutoSetupClashResult {
+	    ok: boolean;
+	    error?: string;
+	    hint?: string;
+	    group?: string;
+	    node_count?: number;
+	    from?: string;
+	    to?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AutoSetupClashResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.error = source["error"];
+	        this.hint = source["hint"];
+	        this.group = source["group"];
+	        this.node_count = source["node_count"];
+	        this.from = source["from"];
+	        this.to = source["to"];
+	    }
+	}
 	export class CleanupCategory {
 	    id: string;
 	    name: string;
@@ -271,6 +295,8 @@ export namespace models {
 	    mitm_debug_dump: boolean;
 	    mitm_full_capture: boolean;
 	    static_cache_intercept: boolean;
+	    mitm_jailbreak_enabled: boolean;
+	    mitm_jailbreak_override: string;
 	    forge_enabled: boolean;
 	    fake_credits: number;
 	    fake_credits_premium: number;
@@ -312,6 +338,8 @@ export namespace models {
 	        this.mitm_debug_dump = source["mitm_debug_dump"];
 	        this.mitm_full_capture = source["mitm_full_capture"];
 	        this.static_cache_intercept = source["static_cache_intercept"];
+	        this.mitm_jailbreak_enabled = source["mitm_jailbreak_enabled"];
+	        this.mitm_jailbreak_override = source["mitm_jailbreak_override"];
 	        this.forge_enabled = source["forge_enabled"];
 	        this.fake_credits = source["fake_credits"];
 	        this.fake_credits_premium = source["fake_credits_premium"];
@@ -340,6 +368,28 @@ export namespace models {
 
 export namespace services {
 	
+	export class AutoDetectClashGroupResult {
+	    ok: boolean;
+	    error?: string;
+	    group: string;
+	    node_count: number;
+	    candidates: string[];
+	    all_groups: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AutoDetectClashGroupResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.error = source["error"];
+	        this.group = source["group"];
+	        this.node_count = source["node_count"];
+	        this.candidates = source["candidates"];
+	        this.all_groups = source["all_groups"];
+	    }
+	}
 	export class ClashProbeResult {
 	    ok: boolean;
 	    error?: string;
@@ -376,6 +426,7 @@ export namespace services {
 	    conv_id: string;
 	    conv_id_short: string;
 	    pool_key_short: string;
+	    pool_key_hash: string;
 	    bound_at: string;
 	    last_seen_at: string;
 	    request_count: number;
@@ -390,6 +441,7 @@ export namespace services {
 	        this.conv_id = source["conv_id"];
 	        this.conv_id_short = source["conv_id_short"];
 	        this.pool_key_short = source["pool_key_short"];
+	        this.pool_key_hash = source["pool_key_hash"];
 	        this.bound_at = source["bound_at"];
 	        this.last_seen_at = source["last_seen_at"];
 	        this.request_count = source["request_count"];

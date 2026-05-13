@@ -1,6 +1,6 @@
 # Windsurf Tools 🏄‍♂️
 
-[![Version](https://img.shields.io/badge/Version-v1.0.0-success)](https://github.com/seven7763/windsurf-tools/releases)
+[![Version](https://img.shields.io/badge/Version-v1.1.0-success)](https://github.com/seven7763/windsurf-tools/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue)](#运行环境--prerequisites)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Built with Wails](https://img.shields.io/badge/Built%20with-Wails%20v2-red)](https://wails.io/)
@@ -135,6 +135,29 @@ wails build
 ---
 
 ## 🔧 最近修复 | Recent Fixes
+
+### v1.1.0 (2026-05-14)
+
+**新功能 | Features**
+- **Cascade 破限注入 (Jailbreak Override)** — MITM 在每次 `GetChatMessage` / `GetCompletions` 请求的 F2 system prompt 末尾追加 override 文本，覆盖模型 alignment / 拒绝模板。等效于 Claude Code `--append-system-prompt-file`，但走 MITM 协议层，**不动 IDE 任何文件**。可在「设置 → Cascade 破限注入」里 toggle + 编辑文本，`恢复默认` 按钮拉后端内置文本。⚠️ 默认文本含 cyber 关键词会被 Anthropic 网关拒，自行删减再用
+- **Clash IP 轮换 智能启用** — 一键按钮：探活控制器 → 自动挑节点最多的 selector group → 写设置 → 启 rotator → 立即切一次。type-aware 过滤排除子组(selector/fallback/urltest)和伪节点("剩余流量"/"套餐到期"/"防失联" type=vmess 假装真节点)。强制开启「限速自动切」开关，避免用户旧设置覆盖
+- **导入未识别提示** — `importAutoDetect` 加 `unknown` 类型，短输入/中文备注/乱码不再被强塞为 refresh_token 提交浪费请求；UI 显示 `X 行未识别` 警示
+
+**Bug 修复 | Bugfixes**
+- **Settings.vue `SkeletonBlock` 漏 import** — 11 处 template 使用但没 import，Vue 控制台报 `Failed to resolve component` (critical runtime bug)
+- **MitmPanel `v-for :key` 撞车** — pool_status 列表用 `key_short` 作 key，`devin-session-token$<JWT>` 类账号共享 16 字符前缀，Vue 错误复用节点。改用 `key_hash`(sha256 前 12 hex)
+- **SessionBindingInfo 跨账号会话误算** — 同上原因，`pool_key_short` 全等过滤会把不同账号但前缀同的会话算到当前 key。后端 SessionBindingInfo 加 `pool_key_hash`，前端 Sidebar 用 hash 精确过滤
+- **Firebase 错误中文化** — `ImportByEmailPassword` 失败时把 `INVALID_LOGIN_CREDENTIALS` / `EMAIL_NOT_FOUND` / `TOO_MANY_ATTEMPTS_TRY_LATER` / `USER_DISABLED` 等英文错误映射成中文
+- **ImportModal 关闭不清 inputText** — 切到 Accounts 重开导入仍能看到上次残留
+- **ImportModal 按钮 disabled 漏检** — 全行未识别 (lineCount=0) 仍可点导致点了无反应
+- **Settings 测试连接「版本: unknown」** — 后端不返回 version 字段，改显示 selector 组数
+- **Settings 顶层 `fetchClashStatus()` 与 onMounted 竞态** — 移入 onMounted 同其他 fetch 一起
+
+**清理 | Cleanup**
+- 删 `ImportModal` 4 个未用 import (`toAPIKeyItems` 等)
+- 删 `settingsModel.ts` 17 处多余 `(s as any)` cast — models.Settings 已含所有字段
+- 删 `Cleanup.vue` 5 处 `(APIInfo as any)` cast — 方法都已正确暴露
+- **Accounts.vue 性能优化** — `quickFilterOptions` 从 O(8N) 降到 O(N)，单次遍历计算 7 个 filter 命中数
 
 ### v1.0.0 (2026-05-09)
 

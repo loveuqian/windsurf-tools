@@ -115,6 +115,37 @@ func (a *App) runConcurrentImport(n int, processFn func(idx int) importSlot) []I
 	return results
 }
 
+// friendlyLoginError 把 Firebase/auth1 的原始英文错误映射成可读中文。
+// 命中关键字时返回中文短句；未命中保留原错误避免吞掉信息。
+func friendlyLoginError(rawErr error) string {
+	if rawErr == nil {
+		return ""
+	}
+	s := strings.ToUpper(rawErr.Error())
+	switch {
+	case strings.Contains(s, "INVALID_LOGIN_CREDENTIALS"),
+		strings.Contains(s, "INVALID_PASSWORD"),
+		strings.Contains(s, "INVALID_EMAIL"):
+		return "邮箱或密码错误"
+	case strings.Contains(s, "EMAIL_NOT_FOUND"):
+		return "账号不存在"
+	case strings.Contains(s, "USER_DISABLED"):
+		return "账号已被禁用"
+	case strings.Contains(s, "TOO_MANY_ATTEMPTS_TRY_LATER"),
+		strings.Contains(s, "429"):
+		return "登录请求过于频繁，请稍后重试（建议把并发调到 1-2）"
+	case strings.Contains(s, "MISSING_PASSWORD"):
+		return "未填写密码"
+	case strings.Contains(s, "OPERATION_NOT_ALLOWED"):
+		return "Firebase 项目未启用邮箱登录"
+	case strings.Contains(s, "网络"), strings.Contains(s, "NO SUCH HOST"),
+		strings.Contains(s, "CONNECTION REFUSED"), strings.Contains(s, "TIMEOUT"):
+		return "网络连接失败 — 请确认能访问 windsurf.com / firebase"
+	}
+	// 不命中时返回原始错误（避免吞掉信息）
+	return rawErr.Error()
+}
+
 func (a *App) ImportByEmailPassword(items []EmailPasswordItem) []ImportResult {
 	return a.runConcurrentImport(len(items), func(idx int) importSlot {
 		item := items[idx]
@@ -136,7 +167,9 @@ func (a *App) ImportByEmailPassword(items []EmailPasswordItem) []ImportResult {
 			}
 		}
 		if err != nil {
-			return importSlot{index: idx, result: ImportResult{Email: item.Email, Success: false, Error: err.Error()}}
+			return importSlot{index: idx, result: ImportResult{
+				Email: item.Email, Success: false, Error: friendlyLoginError(err),
+			}}
 		}
 		nickname := item.Remark
 		if nickname == "" {

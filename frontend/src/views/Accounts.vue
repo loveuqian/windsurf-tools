@@ -246,8 +246,12 @@ const handleDelete = async (id: string) => {
     cancelText: "取消",
     destructive: true,
   });
-  if (ok) {
+  if (!ok) return;
+  try {
     await accountStore.deleteAccount(id);
+    showToast("账号已移除", "success");
+  } catch (e: unknown) {
+    showToast(`移除失败: ${String(e)}`, "error");
   }
 };
 
@@ -689,28 +693,51 @@ const matchesQuickFilter = (
   }
 };
 
+// 单次遍历所有账号，对 7 个 quick filter 同时累加命中数。
+// 旧版逐 filter 对全量账号做 .filter()，每个账号被 getCardStateMeta 调 8 次，
+// 而 getCardStateMeta 内部要 parseFloat + Date.parse + findMitmPoolRuntime 多次。
+// 100 个账号会跑 100×8 = 800 次重计算 — 每次面板渲染都触发。优化后 100 次。
 const quickFilterOptions = computed<
   Array<{ key: AccountQuickFilter; label: string; count: number }>
 >(() => {
-  const options: Array<{ key: AccountQuickFilter; label: string }> = [
-    { key: "all", label: "全部" },
-    { key: "online", label: "当前活跃" },
-    { key: "switchable", label: "可切换" },
-    { key: "depleted", label: "额度见底" },
-    { key: "runtime_exhausted", label: "运行时见底" },
-    { key: "low", label: "额度偏低" },
-    { key: "pending", label: "待同步" },
-    { key: "credential_gap", label: "待补 API Key" },
+  const counts: Record<Exclude<AccountQuickFilter, "all">, number> = {
+    online: 0,
+    switchable: 0,
+    depleted: 0,
+    runtime_exhausted: 0,
+    low: 0,
+    pending: 0,
+    credential_gap: 0,
+  };
+  for (const acc of accountStore.accounts) {
+    const meta = getCardStateMeta(acc);
+    const runtimeExhausted = Boolean(findMitmPoolRuntime(acc)?.runtime_exhausted);
+    if (meta.tone === "online") counts.online++;
+    if (meta.tone === "online" || meta.tone === "ready") counts.switchable++;
+    if (meta.tone === "danger") counts.depleted++;
+    if (runtimeExhausted) counts.runtime_exhausted++;
+    if (meta.tone === "warning") counts.low++;
+    if (meta.tone === "pending") counts.pending++;
+    if (!hasApiKey(acc)) counts.credential_gap++;
+  }
+  return [
+    { key: "all" as const, label: "全部", count: accountStore.accounts.length },
+    { key: "online" as const, label: "当前活跃", count: counts.online },
+    { key: "switchable" as const, label: "可切换", count: counts.switchable },
+    { key: "depleted" as const, label: "额度见底", count: counts.depleted },
+    {
+      key: "runtime_exhausted" as const,
+      label: "运行时见底",
+      count: counts.runtime_exhausted,
+    },
+    { key: "low" as const, label: "额度偏低", count: counts.low },
+    { key: "pending" as const, label: "待同步", count: counts.pending },
+    {
+      key: "credential_gap" as const,
+      label: "待补 API Key",
+      count: counts.credential_gap,
+    },
   ];
-  return options.map((option) => ({
-    ...option,
-    count:
-      option.key === "all"
-        ? accountStore.accounts.length
-        : accountStore.accounts.filter((acc) =>
-            matchesQuickFilter(acc, option.key),
-          ).length,
-  }));
 });
 
 const hasListFilters = computed(

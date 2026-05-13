@@ -22,6 +22,7 @@ import {
   type SettingsForm,
 } from "../utils/settingsModel";
 import PageLoadingSkeleton from "../components/common/PageLoadingSkeleton.vue";
+import SkeletonBlock from "../components/common/SkeletonBlock.vue";
 import {
   CheckCircle2,
   Loader2,
@@ -32,6 +33,7 @@ import {
   Shuffle,
   Zap,
   Globe,
+  Sparkles,
 } from "lucide-vue-next";
 import { confirmDialog, showToast } from "../utils/toast";
 import { APIInfo } from "../api/wails";
@@ -78,6 +80,7 @@ const togglePlanFilter = (tone: string) => {
 onMounted(() => {
   void settingsStore.fetchSettings();
   void fetchRelayStatus();
+  void fetchClashStatus();
 });
 
 watch(
@@ -247,19 +250,73 @@ const fetchClashStatus = async () => {
   }
 };
 
-void fetchClashStatus();
+// 「恢复默认」按钮：从后端拿 services.DefaultJailbreakOverride 写入 local 表单。
+// 走异步是为了避免前端硬编码长文本（一旦后端文案微调前端会漂移）。
+const restoreJailbreakDefault = async () => {
+  try {
+    const text = await APIInfo.getJailbreakDefaultOverride();
+    if (typeof text === "string" && text.trim() !== "") {
+      local.mitm_jailbreak_override = text;
+    }
+  } catch {
+    /* ignore — 用户可手动清空，后端 fallback 会兜底 */
+  }
+};
+
+// ── 一键智能启用 Clash IP 轮换 ──
+// 后端会：探活 → 自动挑 selector 组 → 写设置 → 启 rotator → 立即切一次
+// 用户不需要懂 group / 白名单 / type 概念，点一下就好。
+const clashAutoSetupLoading = ref(false);
+const handleAutoSetupClash = async () => {
+  if (!local.clash_controller_url) {
+    showToast("请先填控制器地址（如 http://127.0.0.1:9097）", "error");
+    return;
+  }
+  clashAutoSetupLoading.value = true;
+  clashTestResult.value = "";
+  try {
+    const res = await APIInfo.autoSetupClash();
+    if (res.ok) {
+      clashTestOk.value = true;
+      const switched =
+        res.from && res.to && res.from !== res.to
+          ? ` · 切换 ${res.from} → ${res.to}`
+          : "";
+      clashTestResult.value = `✓ 已启用 — 组「${res.group}」/ ${res.node_count} 真节点${switched}`;
+      // 后端写了 settings；前端拉一次最新值更新本地表单 + 徽章
+      await settingsStore.fetchSettings(true);
+      await fetchClashStatus();
+      showToast(`Clash 轮换已启用（组：${res.group}）`, "success");
+    } else {
+      clashTestOk.value = false;
+      clashTestResult.value = `✗ ${res.error || "未知错误"}${
+        res.hint ? " — " + res.hint : ""
+      }`;
+      showToast(res.error || "智能启用失败", "error");
+    }
+  } catch (e) {
+    clashTestOk.value = false;
+    clashTestResult.value = `异常: ${String(e)}`;
+  } finally {
+    clashAutoSetupLoading.value = false;
+  }
+};
 
 const handleTestClash = async () => {
   clashLoading.value = true;
   clashTestResult.value = "";
   try {
-    const res = await APIInfo.testClashController(local.clash_controller_url, local.clash_secret);
-    if (res && (res as any).ok) {
+    const res = await APIInfo.testClashController(
+      local.clash_controller_url,
+      local.clash_secret,
+    );
+    if (res?.ok) {
       clashTestOk.value = true;
-      clashTestResult.value = `连接成功 — 版本: ${(res as any).version || "unknown"}`;
+      const groupCount = res.groups?.length ?? 0;
+      clashTestResult.value = `连接成功 — 发现 ${groupCount} 个 selector 组`;
     } else {
       clashTestOk.value = false;
-      clashTestResult.value = `连接失败: ${(res as any).error || "未知错误"}`;
+      clashTestResult.value = `连接失败: ${res?.error || "未知错误"}`;
     }
   } catch (e) {
     clashTestOk.value = false;
@@ -695,6 +752,27 @@ onUnmounted(() => {
                       />
                       <Zap v-else class="w-3.5 h-3.5" stroke-width="2.4" />
                       测试连接
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    class="no-drag-region shrink-0 px-4 py-2 rounded-[12px] font-bold text-[13px] ios-btn bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
+                    :disabled="clashAutoSetupLoading"
+                    @click="handleAutoSetupClash"
+                    title="自动挑选最佳 selector 组 + 启用 + 立即切一次节点（一键完事，不用手填 group / 白名单）"
+                  >
+                    <span class="inline-flex items-center gap-1.5">
+                      <Loader2
+                        v-if="clashAutoSetupLoading"
+                        class="w-3.5 h-3.5 ios-spinner"
+                        stroke-width="2.4"
+                      />
+                      <Sparkles
+                        v-else
+                        class="w-3.5 h-3.5"
+                        stroke-width="2.4"
+                      />
+                      智能启用
                     </span>
                   </button>
                   <span
@@ -1229,6 +1307,47 @@ onUnmounted(() => {
                 </div>
               </div>
               <IToggle v-model="local.forge_enabled" />
+            </div>
+
+            <div
+              class="p-5 sm:p-6 flex flex-col gap-3 bg-rose-500/[0.04] border-t border-black/[0.04] dark:border-white/[0.04]"
+            >
+              <div class="flex items-center justify-between gap-4">
+                <div class="flex-1 pr-4">
+                  <div
+                    class="text-[15px] font-bold text-gray-900 dark:text-gray-100 mb-1 flex items-center gap-2"
+                  >
+                    <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                    Cascade 破限注入 (Jailbreak Override)
+                  </div>
+                  <div class="text-[13px] text-gray-500 dark:text-gray-400">
+                    在每次 GetChatMessage / GetCompletions 请求的 system prompt 末尾注入下方文本，覆盖模型的 alignment / 拒绝模板。等效于 Claude Code 的 <code>--append-system-prompt-file</code>，走 MITM 协议层，不动 IDE 文件。
+                  </div>
+                </div>
+                <IToggle v-model="local.mitm_jailbreak_enabled" />
+              </div>
+
+              <div v-if="local.mitm_jailbreak_enabled" class="flex flex-col gap-2">
+                <div class="flex items-center justify-between text-[12px] text-gray-500 dark:text-gray-400">
+                  <span>覆盖文本（留空 = 用内置默认 OPUS/Claude/Sonnet 通用破限）</span>
+                  <button
+                    type="button"
+                    class="text-rose-600 dark:text-rose-400 hover:underline"
+                    @click="restoreJailbreakDefault"
+                  >
+                    恢复默认
+                  </button>
+                </div>
+                <textarea
+                  v-model="local.mitm_jailbreak_override"
+                  rows="10"
+                  placeholder="留空使用内置默认破限文本…"
+                  class="w-full px-3 py-2 rounded-lg text-[12.5px] font-mono leading-relaxed bg-white dark:bg-gray-900 border border-black/[0.08] dark:border-white/[0.08] focus:outline-none focus:ring-2 focus:ring-rose-500/40"
+                ></textarea>
+                <div class="text-[11px] text-amber-600 dark:text-amber-400">
+                  ⚠ 仅供本地实验/学术研究使用。注入文本不会上传服务端，仅在本机 MITM 拦截阶段附加到请求体。
+                </div>
+              </div>
             </div>
           </div>
         </section>

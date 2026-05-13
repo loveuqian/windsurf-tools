@@ -14,6 +14,14 @@ export function ApplyPerformanceFix(arg1) {
   return window['go']['main']['App']['ApplyPerformanceFix'](arg1);
 }
 
+export function AutoDetectClashGroup() {
+  return window['go']['main']['App']['AutoDetectClashGroup']();
+}
+
+export function AutoSetupClash() {
+  return window['go']['main']['App']['AutoSetupClash']();
+}
+
 export function CleanupAllSafe() {
   return window['go']['main']['App']['CleanupAllSafe']();
 }
@@ -64,6 +72,10 @@ export function GetCaptureDir() {
 
 export function GetClashRotatorRunning() {
   return window['go']['main']['App']['GetClashRotatorRunning']();
+}
+
+export function GetJailbreakDefaultOverride() {
+  return window['go']['main']['App']['GetJailbreakDefaultOverride']();
 }
 
 export function GetMitmCAPath() {

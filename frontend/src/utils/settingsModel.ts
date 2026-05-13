@@ -52,6 +52,8 @@ export function createDefaultSettings(): models.Settings {
     import_concurrency: 3,
     forge_enabled: false,
     static_cache_intercept: true,
+    mitm_jailbreak_enabled: false,
+    mitm_jailbreak_override: '',
     mitm_full_capture: false,
     mitm_debug_dump: false,
     clash_rotate_enabled: false,
@@ -93,6 +95,8 @@ export function normalizeSettings(raw: unknown): models.Settings {
     import_concurrency: Math.max(1, Math.min(20, Number(s.import_concurrency) || 3)),
     forge_enabled: 'forge_enabled' in s ? Boolean(s.forge_enabled) : false,
     static_cache_intercept: 'static_cache_intercept' in s ? Boolean(s.static_cache_intercept) : true,
+    mitm_jailbreak_enabled: 'mitm_jailbreak_enabled' in s ? Boolean(s.mitm_jailbreak_enabled) : false,
+    mitm_jailbreak_override: String(s.mitm_jailbreak_override ?? ''),
     mitm_full_capture: 'mitm_full_capture' in s ? Boolean(s.mitm_full_capture) : false,
     mitm_debug_dump: 'mitm_debug_dump' in s ? Boolean(s.mitm_debug_dump) : false,
     clash_rotate_enabled: 'clash_rotate_enabled' in s ? Boolean(s.clash_rotate_enabled) : false,
@@ -202,6 +206,10 @@ export type SettingsForm = {
   forge_enabled: boolean
   /** 静态响应缓存拦截 (.bin 文件直返) */
   static_cache_intercept: boolean
+  /** 破限注入：MITM 在 chat F2 system prompt 末尾追加 override 文本 */
+  mitm_jailbreak_enabled: boolean
+  /** 破限注入文本（空字符串 = 后端 fallback 到 DefaultJailbreakOverride） */
+  mitm_jailbreak_override: string
   /** MITM 全量抓包落盘 */
   mitm_full_capture: boolean
   /** MITM protobuf dump 诊断 */
@@ -233,23 +241,25 @@ export function settingsToForm(s: models.Settings): SettingsForm {
     openai_relay_enabled: s.openai_relay_enabled === true,
     openai_relay_port: Math.max(1, Number(s.openai_relay_port) || 8787),
     openai_relay_secret: String(s.openai_relay_secret ?? ''),
-    debug_log: (s as any).debug_log === true,
-    import_concurrency: Math.max(1, Math.min(20, Number((s as any).import_concurrency) || 3)),
-    forge_enabled: (s as any).forge_enabled === true,
-    static_cache_intercept: (s as any).static_cache_intercept !== false,
-    mitm_full_capture: (s as any).mitm_full_capture === true,
-    mitm_debug_dump: (s as any).mitm_debug_dump === true,
-    clash_rotate_enabled: (s as any).clash_rotate_enabled === true,
-    clash_controller_url: String((s as any).clash_controller_url ?? 'http://127.0.0.1:9097'),
-    clash_secret: String((s as any).clash_secret ?? ''),
-    clash_group: String((s as any).clash_group ?? ''),
-    clash_nodes: String((s as any).clash_nodes ?? ''),
-    clash_interval_minutes: clampClashInterval(Number((s as any).clash_interval_minutes ?? 8)),
-    clash_rotate_on_rate_limit: (s as any).clash_rotate_on_rate_limit !== false,
+    debug_log: s.debug_log === true,
+    import_concurrency: Math.max(1, Math.min(20, Number(s.import_concurrency) || 3)),
+    forge_enabled: s.forge_enabled === true,
+    static_cache_intercept: s.static_cache_intercept !== false,
+    mitm_jailbreak_enabled: s.mitm_jailbreak_enabled === true,
+    mitm_jailbreak_override: String(s.mitm_jailbreak_override ?? ''),
+    mitm_full_capture: s.mitm_full_capture === true,
+    mitm_debug_dump: s.mitm_debug_dump === true,
+    clash_rotate_enabled: s.clash_rotate_enabled === true,
+    clash_controller_url: String(s.clash_controller_url ?? 'http://127.0.0.1:9097'),
+    clash_secret: String(s.clash_secret ?? ''),
+    clash_group: String(s.clash_group ?? ''),
+    clash_nodes: String(s.clash_nodes ?? ''),
+    clash_interval_minutes: clampClashInterval(Number(s.clash_interval_minutes ?? 8)),
+    clash_rotate_on_rate_limit: s.clash_rotate_on_rate_limit !== false,
     clash_latency_test_url: String(
-      (s as any).clash_latency_test_url ?? 'http://www.gstatic.com/generate_204',
+      s.clash_latency_test_url ?? 'http://www.gstatic.com/generate_204',
     ),
-    clash_latency_max_ms: Math.max(0, Math.min(10000, Number((s as any).clash_latency_max_ms ?? 800))),
+    clash_latency_max_ms: Math.max(0, Math.min(10000, Number(s.clash_latency_max_ms ?? 800))),
   }
 }
 
@@ -272,6 +282,8 @@ export function formToSettings(form: SettingsForm): models.Settings {
     import_concurrency: Math.max(1, Math.min(20, Math.round(form.import_concurrency) || 3)),
     forge_enabled: form.forge_enabled,
     static_cache_intercept: form.static_cache_intercept,
+    mitm_jailbreak_enabled: form.mitm_jailbreak_enabled,
+    mitm_jailbreak_override: (form.mitm_jailbreak_override ?? '').trim(),
     mitm_full_capture: form.mitm_full_capture,
     mitm_debug_dump: form.mitm_debug_dump,
     clash_rotate_enabled: form.clash_rotate_enabled,

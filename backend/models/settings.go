@@ -27,6 +27,14 @@ type Settings struct {
 	// ── 静态响应缓存 ──
 	StaticCacheIntercept bool `json:"static_cache_intercept"`
 
+	// ── 破限注入（chat system prompt 末尾追加 override 文本） ──
+	// MitmJailbreakEnabled 开启后，所有 GetChatMessage / GetCompletions 请求
+	// 在 F2 顶层 system prompt 末尾追加 MitmJailbreakOverride 文本。覆盖
+	// alignment / 拒绝模板，等效于 patch-claude-v2.py 的 `--append-system-
+	// prompt-file override.md`，但走协议层、IDE 升级不受影响。
+	MitmJailbreakEnabled  bool   `json:"mitm_jailbreak_enabled"`
+	MitmJailbreakOverride string `json:"mitm_jailbreak_override"`
+
 	// ── GetUserStatus 伪造 ──
 	ForgeEnabled           bool   `json:"forge_enabled"`
 	FakeCredits            int    `json:"fake_credits"`
@@ -85,6 +93,8 @@ func DefaultSettings() Settings {
 		MitmDebugDump:              false,
 		MitmFullCapture:            false,
 		StaticCacheIntercept:       true,
+		MitmJailbreakEnabled:       false,
+		MitmJailbreakOverride:      "", // 空表示用 services.DefaultJailbreakOverride
 		ForgeEnabled:               false,
 		FakeCredits:                10000000,
 		FakeCreditsPremium:         150000,

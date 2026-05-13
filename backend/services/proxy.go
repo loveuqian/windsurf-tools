@@ -280,6 +280,7 @@ type MitmProxy struct {
 
 	forgeConfig       ForgeConfig
 	staticCacheConfig StaticCacheConfig
+	jailbreakConfig   JailbreakConfig // chat system prompt 末尾注入「破限」覆盖文本
 
 	usageTracker *UsageTracker
 
@@ -413,9 +414,15 @@ type SessionBinding struct {
 
 // SessionBindingInfo is the frontend-safe DTO for session bindings.
 type SessionBindingInfo struct {
-	ConvID       string `json:"conv_id"`
-	ConvIDShort  string `json:"conv_id_short"`
+	ConvID      string `json:"conv_id"`
+	ConvIDShort string `json:"conv_id_short"`
+	// PoolKeyShort 是前 16 字符 + "..."，仅用于显示。
+	// 长 token 类账号(devin-session-token$<JWT>) 共享前缀会让多个账号截到相同
+	// 字符串 —— 不要用它做唯一匹配，会跨账号撞车。
 	PoolKeyShort string `json:"pool_key_short"`
+	// PoolKeyHash 是 sha256 前 12 hex，全局唯一指纹。前端用此过滤"哪些会话归属
+	// 当前 active key"，避免 PoolKeyShort 同前缀撞车把别账号会话误算。
+	PoolKeyHash  string `json:"pool_key_hash"`
 	BoundAt      string `json:"bound_at"`
 	LastSeenAt   string `json:"last_seen_at"`
 	RequestCount int    `json:"request_count"`
@@ -1735,6 +1742,21 @@ func (p *MitmProxy) handleRequest(req *http.Request, origHost string) {
 		p.log("身份替换: %s key=%s...%s sid=%s fp=%v", pathTail, poolKey[:minStr(12, len(poolKey))], suffix3(poolKey), sid, randFP)
 	} else {
 		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		newBody = bodyBytes
+	}
+
+	// ★ 破限注入：仅 chat 路径(GetChatMessage / GetCompletions)，向 F2 system
+	// prompt 末尾追加 override 文本。Cortex / Trajectory 不带 system prompt，
+	// 跳过避免破坏其它消息。
+	p.mu.RLock()
+	jb := p.jailbreakConfig
+	p.mu.RUnlock()
+	if jb.Enabled && jb.Override != "" && isChatPath(path) {
+		if injected, ok := InjectSystemPromptOverride(newBody, jb.Override); ok {
+			req.Body = io.NopCloser(bytes.NewReader(injected))
+			req.ContentLength = int64(len(injected))
+			p.log("破限注入: %s (+%dB to system prompt)", pathTail, len(injected)-len(newBody))
+		}
 	}
 
 	// Debug dump: GetChatMessage 请求
@@ -2669,6 +2691,7 @@ func (p *MitmProxy) GetSessionBindings() []SessionBindingInfo {
 		result = append(result, SessionBindingInfo{
 			ConvIDShort:  convShort,
 			PoolKeyShort: keyShort,
+			PoolKeyHash:  HashPoolKey(b.PoolKey),
 			BoundAt:      b.BoundAt.Format(time.RFC3339),
 			LastSeenAt:   b.LastSeenAt.Format(time.RFC3339),
 			RequestCount: b.RequestCount,
