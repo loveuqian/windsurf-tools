@@ -1,6 +1,6 @@
 # Windsurf Tools 🏄‍♂️
 
-[![Version](https://img.shields.io/badge/Version-v1.3.0-success)](https://github.com/seven7763/windsurf-tools/releases)
+[![Version](https://img.shields.io/badge/Version-v1.4.0-success)](https://github.com/seven7763/windsurf-tools/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue)](#运行环境--prerequisites)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Built with Wails](https://img.shields.io/badge/Built%20with-Wails%20v2-red)](https://wails.io/)
@@ -135,6 +135,16 @@ wails build
 ---
 
 ## 🔧 最近修复 | Recent Fixes
+
+### v1.4.0 (2026-05-14)
+
+**iOS 化全方面打磨 | iOS-Polish**
+
+- **INumberStepper 新组件** — `[− 数字 +]` 风格替换所有 number input：长按 500ms 后 80ms 间隔连续 ±，点击数字可键入。Settings 里 8 处替换（quota poll / 间隔 / 并发 / 池间隔 / 池额度刷新 / clash 间隔 / 延迟阈值 等）
+- **ISelectSheet 新组件** — iOS 弹底部 sheet 替换 native select：圆角 + backdrop blur + Check 图标标识当前选中 + 拖手柄 + 取消按钮。支持 description 二级说明、ESC / 遮罩点击关闭、Teleport 到 body 不被父 overflow 截断。替换 4 处（Quota Policy / Accounts 排序 / 套餐分组 / 分页大小）
+- **IToggle 弹性过渡** — `cubic-bezier(0.34,1.56,0.64,1)` 弹簧曲线 + active:scale-95 + 开启状态 inset 高光，更 iOS 原生触感
+- **Settings 左侧 sticky 锚点 nav** — `IntersectionObserver` 跟踪当前 section + 高亮当前位置。5 段 nav（使用模式 / OpenAI Relay / Clash IP 轮换 / 保活·切换·池 / 高级·破限），点 nav 平滑 `scrollIntoView`。大屏 lg 显示左侧 sticky；小屏 lg- 退化为顶部 horizontal pill nav
+- **Accounts 空状态升级** — 大型渐变 icon 组合 (32×32 + Plus 角标) + 24px 大字标题 + 3 步引导卡片（① 批量导入 ② 启用 MITM ③ 开始使用）+ 主 CTA 加渐变 + scale 触感
 
 ### v1.3.0 (2026-05-14)
 

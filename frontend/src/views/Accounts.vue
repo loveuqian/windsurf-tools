@@ -6,6 +6,7 @@ import { useMitmStatusStore } from "../stores/useMitmStatusStore";
 import { useSettingsStore } from "../stores/useSettingsStore";
 import ImportModal from "../components/accounts/ImportModal.vue";
 import AccountCardSkeleton from "../components/accounts/AccountCardSkeleton.vue";
+import ISelectSheet from "../components/ios/ISelectSheet.vue";
 import {
   ArrowRightLeft,
   Plus,
@@ -142,6 +143,20 @@ const freePlanAccountCount = computed(() => accountAgg.value.freeCount);
 const accountSort = ref<"group" | "name" | "quota">("group");
 const pageSize = ref(60);
 const currentPage = ref(1);
+
+// ── v1.4.0 iOS select 选项 ──
+const accountSortOptions = [
+  { value: "group", label: "按分组（默认）", description: "Pro / Trial / Free 等套餐归类" },
+  { value: "name", label: "按邮箱 A→Z", description: "字典序排列" },
+  { value: "quota", label: "按日剩余额度 ↑", description: "见底的排在最前" },
+];
+
+const pageSizeOptions = [
+  { value: 30, label: "30 / 页" },
+  { value: 60, label: "60 / 页" },
+  { value: 120, label: "120 / 页" },
+  { value: 300, label: "300 / 页" },
+];
 
 const displayAccounts = computed(() => {
   const items = [...filteredAccounts.value];
@@ -458,6 +473,15 @@ const planGroupCount = computed(() => {
   if (!planGroupFilter.value) return 0;
   return poolPlanCounts.value[planGroupFilter.value as SwitchPlanTone] ?? 0;
 });
+
+// ISelectSheet 选项 — 第一项空 value = 「未选择」
+const planGroupOptions = computed(() => [
+  { value: "", label: "按套餐操作…" },
+  ...SWITCH_PLAN_FILTER_TONES.map((tone) => ({
+    value: tone,
+    label: `${PLAN_TONE_LABELS[tone] ?? tone} (${poolPlanCounts.value[tone] ?? 0})`,
+  })),
+]);
 
 const handleDeleteByPlanGroup = async () => {
   const tone = planGroupFilter.value;
@@ -929,21 +953,12 @@ const getPlanAccentClass = (acc: models.Account) => {
         <div
           class="flex items-center gap-1.5 ml-1 pl-2 border-l border-black/10 dark:border-white/10"
         >
-          <select
+          <ISelectSheet
             v-model="planGroupFilter"
-            class="no-drag-region h-[36px] rounded-full bg-black/5 dark:bg-white/10 px-3 pr-7 text-[13px] font-semibold text-ios-text dark:text-ios-textDark outline-none cursor-pointer appearance-none"
-          >
-            <option value="">按套餐操作…</option>
-            <option
-              v-for="tone in SWITCH_PLAN_FILTER_TONES"
-              :key="tone"
-              :value="tone"
-            >
-              {{ PLAN_TONE_LABELS[tone] ?? tone }} ({{
-                poolPlanCounts[tone] ?? 0
-              }})
-            </option>
-          </select>
+            :options="(planGroupOptions as any)"
+            title="选择套餐类型"
+            width="w-44"
+          />
           <template v-if="planGroupFilter">
             <button
               type="button"
@@ -1052,14 +1067,12 @@ const getPlanAccentClass = (acc: models.Account) => {
           <X class="w-4 h-4 mx-auto" stroke-width="2.5" />
         </button>
       </div>
-      <select
+      <ISelectSheet
         v-model="accountSort"
-        class="no-drag-region shrink-0 px-4 py-2.5 rounded-[14px] bg-black/[0.04] border border-black/[0.06] text-[13px] font-medium outline-none focus:ring-2 focus:ring-ios-blue/25 dark:bg-white/[0.06] dark:border-white/[0.08] dark:text-gray-100"
-      >
-        <option value="group">按分组（默认）</option>
-        <option value="name">按邮箱 A→Z</option>
-        <option value="quota">按日剩余额度 ↑</option>
-      </select>
+        :options="(accountSortOptions as any)"
+        title="账号排序方式"
+        width="w-44"
+      />
     </div>
 
     <PageLoadingSkeleton
@@ -1070,33 +1083,68 @@ const getPlanAccentClass = (acc: models.Account) => {
 
     <div
       v-else-if="accountStore.accounts.length === 0"
-      class="flex flex-col items-center justify-center flex-1 text-ios-textSecondary"
+      class="flex flex-col items-center justify-center flex-1 text-ios-textSecondary py-12"
     >
-      <div
-        class="w-24 h-24 mb-6 rounded-3xl bg-black/5 dark:bg-white/5 flex items-center justify-center"
-      >
-        <Users class="w-12 h-12 opacity-50" />
+      <!-- 大型亲切 icon 组合 -->
+      <div class="relative mb-8">
+        <div class="w-32 h-32 rounded-[32px] bg-gradient-to-br from-ios-blue/15 to-violet-500/15 dark:from-ios-blue/25 dark:to-violet-500/25 flex items-center justify-center shadow-[0_12px_32px_rgba(37,99,235,0.12)]">
+          <Users class="w-14 h-14 text-ios-blue dark:text-blue-300" stroke-width="1.8" />
+        </div>
+        <div class="absolute -bottom-2 -right-2 w-12 h-12 rounded-2xl bg-white dark:bg-[#1C1C1E] flex items-center justify-center shadow-md ring-2 ring-white/80 dark:ring-black/80">
+          <Plus class="w-7 h-7 text-emerald-500" stroke-width="2.6" />
+        </div>
       </div>
-      <p class="text-[18px] font-bold text-ios-text dark:text-ios-textDark">
+
+      <h2 class="text-[24px] font-bold text-ios-text dark:text-ios-textDark mb-2">
         {{ emptyStateTitle }}
-      </p>
-      <p
-        class="mt-3 max-w-[560px] text-center text-[13px] leading-relaxed text-ios-textSecondary dark:text-ios-textSecondaryDark"
-      >
+      </h2>
+      <p class="max-w-[440px] text-center text-[14px] leading-relaxed text-ios-textSecondary dark:text-ios-textSecondaryDark mb-8">
         {{ emptyStateBody }}
       </p>
-      <div class="mt-5 flex flex-wrap items-center justify-center gap-2">
+
+      <!-- 3 步引导卡片 -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 max-w-[780px] w-full px-4 mb-8">
+        <div class="rounded-[20px] border border-black/[0.05] dark:border-white/[0.08] bg-white/70 dark:bg-white/[0.04] p-4 flex flex-col items-start gap-2">
+          <div class="flex items-center gap-2">
+            <div class="w-7 h-7 rounded-full bg-ios-blue/15 text-ios-blue flex items-center justify-center text-[13px] font-black">1</div>
+            <span class="text-[14px] font-bold text-ios-text dark:text-ios-textDark">批量导入</span>
+          </div>
+          <p class="text-[12px] text-gray-500 dark:text-gray-400 leading-relaxed">
+            粘贴 API Key / JWT / 邮箱密码 / Refresh Token，自动识别类型并入池。
+          </p>
+        </div>
+        <div class="rounded-[20px] border border-black/[0.05] dark:border-white/[0.08] bg-white/70 dark:bg-white/[0.04] p-4 flex flex-col items-start gap-2">
+          <div class="flex items-center gap-2">
+            <div class="w-7 h-7 rounded-full bg-violet-500/15 text-violet-600 dark:text-violet-300 flex items-center justify-center text-[13px] font-black">2</div>
+            <span class="text-[14px] font-bold text-ios-text dark:text-ios-textDark">启用 MITM</span>
+          </div>
+          <p class="text-[12px] text-gray-500 dark:text-gray-400 leading-relaxed">
+            在 Dashboard 完成证书 + hosts 配置后打开 MITM，号池立即接管 IDE 流量。
+          </p>
+        </div>
+        <div class="rounded-[20px] border border-black/[0.05] dark:border-white/[0.08] bg-white/70 dark:bg-white/[0.04] p-4 flex flex-col items-start gap-2">
+          <div class="flex items-center gap-2">
+            <div class="w-7 h-7 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 flex items-center justify-center text-[13px] font-black">3</div>
+            <span class="text-[14px] font-bold text-ios-text dark:text-ios-textDark">开始使用</span>
+          </div>
+          <p class="text-[12px] text-gray-500 dark:text-gray-400 leading-relaxed">
+            Cascade 对话自动按额度无感切号，可选启用轮换池 + Clash 加速。
+          </p>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-center gap-2">
         <button
           type="button"
-          class="no-drag-region inline-flex items-center gap-2 rounded-full bg-ios-blue px-4 py-2.5 text-[13px] font-bold text-white transition-colors hover:bg-blue-500 ios-btn"
+          class="no-drag-region inline-flex items-center gap-2 rounded-full bg-gradient-to-b from-[#3b82f6] to-ios-blue px-6 py-3 text-[14px] font-bold text-white transition-all hover:scale-[1.02] active:scale-[0.98] ios-btn shadow-md shadow-ios-blue/25"
           @click="showImportModal = true"
         >
           <Plus class="h-4 w-4" stroke-width="2.4" />
-          导入账号
+          开始导入第一个账号
         </button>
         <button
           type="button"
-          class="no-drag-region inline-flex items-center gap-2 rounded-full border border-black/[0.06] bg-white/80 px-4 py-2.5 text-[13px] font-bold text-gray-700 transition-colors hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-gray-200 dark:hover:bg-white/[0.08] ios-btn"
+          class="no-drag-region inline-flex items-center gap-2 rounded-full border border-black/[0.06] bg-white/80 px-4 py-3 text-[13px] font-bold text-gray-700 transition-colors hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-gray-200 dark:hover:bg-white/[0.08] ios-btn"
           @click="goRelay"
         >
           <ChevronRight class="h-4 w-4" stroke-width="2.4" />
@@ -1449,15 +1497,12 @@ const getPlanAccentClass = (acc: models.Account) => {
           页
         </div>
         <div class="flex items-center gap-2">
-          <select
-            v-model.number="pageSize"
-            class="no-drag-region rounded-lg border border-black/[0.06] bg-black/[0.03] px-2.5 py-1.5 text-[12px] font-medium outline-none dark:border-white/[0.08] dark:bg-white/[0.04]"
-          >
-            <option :value="30">30 / 页</option>
-            <option :value="60">60 / 页</option>
-            <option :value="120">120 / 页</option>
-            <option :value="300">300 / 页</option>
-          </select>
+          <ISelectSheet
+            v-model="pageSize"
+            :options="(pageSizeOptions as any)"
+            title="每页显示"
+            width="w-28"
+          />
           <button
             type="button"
             class="no-drag-region rounded-lg border border-black/[0.06] bg-white px-3 py-1.5 text-[12px] font-bold transition hover:bg-black/[0.04] disabled:opacity-40 dark:border-white/[0.08] dark:bg-white/[0.06]"

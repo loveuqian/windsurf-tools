@@ -11,6 +11,8 @@ import {
 import { useSettingsStore } from "../stores/useSettingsStore";
 import { useAccountStore } from "../stores/useAccountStore";
 import IToggle from "../components/ios/IToggle.vue";
+import INumberStepper from "../components/ios/INumberStepper.vue";
+import ISelectSheet from "../components/ios/ISelectSheet.vue";
 import {
   clampHotPollSeconds,
   clampQuotaMinutes,
@@ -90,6 +92,8 @@ onMounted(() => {
   void fetchPinStatus();
   void fetchPoolStatus();
   void accountStore.ensureAccountsLoaded();
+  // v1.4.0：等渲染完启 IntersectionObserver 跟踪 section
+  nextTick(() => setupSectionObserver());
 });
 
 watch(
@@ -430,6 +434,46 @@ const poolStatus = ref<RotationPoolStatus | null>(null);
 const poolStatusLoading = ref(false);
 const poolSearchQuery = ref("");
 
+// ── v1.4.0 Settings 锚点导航 ──
+const navSections = [
+  { id: "sec-mode", label: "使用模式" },
+  { id: "sec-relay", label: "OpenAI Relay" },
+  { id: "sec-clash", label: "Clash IP 轮换" },
+  { id: "sec-keepalive", label: "保活 / 切换 / 池" },
+  { id: "sec-advanced", label: "高级 / 破限" },
+];
+const activeSectionId = ref("sec-mode");
+
+const scrollToSection = (id: string) => {
+  const el = document.getElementById(id);
+  if (el) {
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    activeSectionId.value = id;
+  }
+};
+
+let sectionObserver: IntersectionObserver | null = null;
+const setupSectionObserver = () => {
+  if (typeof IntersectionObserver === "undefined") return;
+  sectionObserver?.disconnect();
+  sectionObserver = new IntersectionObserver(
+    (entries) => {
+      // 找最靠上 + 可见度 >0 的 section 作 active
+      const visible = entries
+        .filter((e) => e.isIntersecting)
+        .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+      if (visible.length > 0) {
+        activeSectionId.value = visible[0].target.id;
+      }
+    },
+    { rootMargin: "-15% 0px -70% 0px", threshold: [0, 0.1] },
+  );
+  for (const s of navSections) {
+    const el = document.getElementById(s.id);
+    if (el) sectionObserver.observe(el);
+  }
+};
+
 const fetchPinStatus = async () => {
   try {
     pinStatus.value = await APIInfo.getManualPinStatus();
@@ -655,6 +699,7 @@ const handleTriggerRotate = async () => {
 };
 
 onUnmounted(() => {
+  sectionObserver?.disconnect();
   if (autoSaveDebounceTimer) {
     clearTimeout(autoSaveDebounceTimer);
     autoSaveDebounceTimer = null;
@@ -668,7 +713,48 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="p-6 md:p-8 max-w-4xl mx-auto w-full pb-10">
+  <div class="p-6 md:p-8 max-w-6xl mx-auto w-full pb-10 flex flex-col lg:flex-row gap-6">
+    <!-- ★ v1.4.0 左侧 sticky 锚点 nav (大屏) -->
+    <aside class="hidden lg:block w-44 shrink-0">
+      <nav class="sticky top-6 flex flex-col gap-1">
+        <button
+          v-for="s in navSections"
+          :key="s.id"
+          type="button"
+          class="no-drag-region text-left px-3 py-2 rounded-[12px] text-[13px] font-bold transition-all"
+          :class="
+            activeSectionId === s.id
+              ? 'bg-ios-blue/10 text-ios-blue dark:bg-ios-blue/20 dark:text-blue-300 shadow-sm'
+              : 'text-gray-600 dark:text-gray-400 hover:bg-black/[0.04] dark:hover:bg-white/[0.05]'
+          "
+          @click="scrollToSection(s.id)"
+        >
+          {{ s.label }}
+        </button>
+      </nav>
+    </aside>
+
+    <!-- ★ v1.4.0 小屏顶部 horizontal pill nav -->
+    <div
+      class="lg:hidden flex gap-1.5 overflow-x-auto no-scrollbar pb-2 -mx-2 px-2"
+    >
+      <button
+        v-for="s in navSections"
+        :key="s.id"
+        type="button"
+        class="no-drag-region shrink-0 px-3 py-1.5 rounded-full text-[12px] font-bold transition-colors whitespace-nowrap"
+        :class="
+          activeSectionId === s.id
+            ? 'bg-ios-blue text-white shadow-sm'
+            : 'bg-black/[0.04] text-gray-600 dark:bg-white/[0.06] dark:text-gray-400'
+        "
+        @click="scrollToSection(s.id)"
+      >
+        {{ s.label }}
+      </button>
+    </div>
+
+    <div class="flex-1 min-w-0">
     <div class="flex items-start justify-between mb-8 shrink-0 flex-wrap gap-4">
       <div>
         <h1
@@ -726,7 +812,7 @@ onUnmounted(() => {
 
       <div v-else key="settings-content" class="space-y-8">
         <!-- 使用模式 -->
-        <section>
+        <section id="sec-mode">
           <h2
             class="text-[13px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-3 px-2"
           >
@@ -772,7 +858,7 @@ onUnmounted(() => {
         </section>
 
         <!-- OpenAI 中转 -->
-        <section>
+        <section id="sec-relay">
           <h2
             class="text-[13px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-3 px-2"
           >
@@ -952,7 +1038,7 @@ onUnmounted(() => {
         </section>
 
         <!-- Clash IP 轮换 -->
-        <section>
+        <section id="sec-clash">
           <h2
             class="text-[13px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-3 px-2"
           >
@@ -1177,20 +1263,13 @@ onUnmounted(() => {
                       每隔多少分钟自动切换到下一个节点（2~60 分钟）。
                     </div>
                   </div>
-                  <div
-                    class="relative shrink-0 flex items-center bg-gray-100 dark:bg-black/20 rounded-[12px] px-3 py-1.5 focus-within:ring-2 focus-within:ring-ios-blue/30 border border-black/5 dark:border-white/5"
-                  >
-                    <input
-                      v-model.number="local.clash_interval_minutes"
-                      type="number"
-                      min="2"
-                      max="60"
-                      class="no-drag-region w-14 text-center bg-transparent border-none text-[15px] font-bold text-gray-900 dark:text-gray-100 outline-none p-0"
-                    />
-                    <span class="text-[13px] font-bold text-gray-400 dark:text-gray-500 ml-1"
-                      >min</span
-                    >
-                  </div>
+                  <INumberStepper
+                    v-model="local.clash_interval_minutes"
+                    :min="2"
+                    :max="60"
+                    suffix="min"
+                    :width="50"
+                  />
                 </div>
 
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1234,19 +1313,16 @@ onUnmounted(() => {
                       >最大延迟</label
                     >
                     <div
-                      class="relative flex items-center bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 rounded-[12px] px-3 py-2.5 focus-within:ring-2 focus-within:ring-ios-blue/30"
+                      class="flex items-center"
                     >
-                      <input
-                        v-model.number="local.clash_latency_max_ms"
-                        type="number"
-                        min="0"
-                        max="10000"
-                        class="no-drag-region w-full bg-transparent border-none text-[14px] font-bold text-gray-900 dark:text-gray-100 outline-none p-0"
+                      <INumberStepper
+                        v-model="local.clash_latency_max_ms"
+                        :min="0"
+                        :max="10000"
+                        :step="50"
+                        suffix="ms"
+                        :width="72"
                       />
-                      <span
-                        class="text-[12px] font-bold text-gray-400 dark:text-gray-500 ml-1 shrink-0"
-                        >ms</span
-                      >
                     </div>
                   </div>
                 </div>
@@ -1287,7 +1363,7 @@ onUnmounted(() => {
         </section>
 
         <!-- 保活与额度同步 -->
-        <section>
+        <section id="sec-keepalive">
           <h2
             class="text-[13px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-3 px-2"
           >
@@ -1341,31 +1417,25 @@ onUnmounted(() => {
                   class="text-[13px] font-bold text-gray-700 dark:text-gray-300"
                   >全局额度同步策略</label
                 >
-                <select
+                <ISelectSheet
                   v-model="local.quota_refresh_policy"
-                  class="no-drag-region bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 rounded-[12px] px-3 py-2.5 text-[14px] outline-none focus:ring-2 focus:ring-ios-blue/30 font-medium"
-                >
-                  <option
-                    v-for="opt in quotaPolicyOptions"
-                    :key="opt.value"
-                    :value="opt.value"
-                  >
-                    {{ opt.label }}
-                  </option>
-                </select>
+                  :options="quotaPolicyOptions"
+                  title="选择额度同步策略"
+                />
                 <div
                   v-if="local.quota_refresh_policy === 'custom'"
-                  class="pt-2"
+                  class="pt-2 flex items-center gap-3"
                 >
-                  <label class="text-[12px] text-gray-500 dark:text-gray-400 font-bold mb-1 block"
+                  <label class="text-[12px] text-gray-500 dark:text-gray-400 font-bold"
                     >自定义分钟（5~10080）</label
                   >
-                  <input
-                    v-model.number="local.quota_custom_interval_minutes"
-                    type="number"
-                    min="5"
-                    max="10080"
-                    class="no-drag-region w-full bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 rounded-[12px] px-3 py-2.5 text-[14px] outline-none focus:ring-2"
+                  <INumberStepper
+                    v-model="local.quota_custom_interval_minutes"
+                    :min="5"
+                    :max="10080"
+                    :step="5"
+                    suffix="min"
+                    :width="64"
                   />
                 </div>
               </div>
@@ -1455,19 +1525,14 @@ onUnmounted(() => {
                   15-30。越低越容易察觉到额度耗尽，发包压力越高。
                 </div>
               </div>
-              <div
-                class="relative shrink-0 flex items-center bg-gray-100 dark:bg-black/20 rounded-[12px] px-3 py-1.5 focus-within:ring-2 focus-within:ring-ios-blue/30 border border-black/5 dark:border-white/5"
-              >
-                <input
-                  v-model.number="local.quota_hot_poll_seconds"
-                  type="number"
-                  min="5"
-                  max="60"
-                  class="no-drag-region w-14 text-center bg-transparent border-none text-[15px] font-bold text-gray-900 dark:text-gray-100 outline-none p-0"
+              <div class="relative shrink-0 flex items-center">
+                <INumberStepper
+                  v-model="local.quota_hot_poll_seconds"
+                  :min="5"
+                  :max="60"
+                  suffix="sec"
+                  :width="48"
                 />
-                <span class="text-[13px] font-bold text-gray-400 dark:text-gray-500 ml-1"
-                  >sec</span
-                >
               </div>
             </div>
 
@@ -1520,24 +1585,22 @@ onUnmounted(() => {
                     <label class="text-[12px] font-bold text-gray-600 dark:text-gray-400">
                       定时切间隔（分钟，1-60）
                     </label>
-                    <input
-                      v-model.number="local.rotation_pool_interval_min"
-                      type="number"
-                      min="1"
-                      max="60"
-                      class="no-drag-region w-full px-3 py-2 rounded-lg text-[14px] font-bold bg-white dark:bg-gray-900 border border-black/[0.08] dark:border-white/[0.08] focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+                    <INumberStepper
+                      v-model="local.rotation_pool_interval_min"
+                      :min="1"
+                      :max="60"
+                      :width="40"
                     />
                   </div>
                   <div class="flex flex-col gap-1">
                     <label class="text-[12px] font-bold text-gray-600 dark:text-gray-400">
                       池内额度刷新间隔（分钟，1-10）
                     </label>
-                    <input
-                      v-model.number="local.rotation_pool_quota_refresh_min"
-                      type="number"
-                      min="1"
-                      max="10"
-                      class="no-drag-region w-full px-3 py-2 rounded-lg text-[14px] font-bold bg-white dark:bg-gray-900 border border-black/[0.08] dark:border-white/[0.08] focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+                    <INumberStepper
+                      v-model="local.rotation_pool_quota_refresh_min"
+                      :min="1"
+                      :max="10"
+                      :width="40"
                     />
                   </div>
                 </div>
@@ -1694,15 +1757,12 @@ onUnmounted(() => {
                   与额度同步会按批次推进，这里控制每一批的并发上限，避免一次性把整个号池打满。
                 </div>
               </div>
-              <div
-                class="relative shrink-0 flex items-center bg-gray-100 dark:bg-black/20 rounded-[12px] px-3 py-1.5 focus-within:ring-2 focus-within:ring-ios-blue/30 border border-black/5 dark:border-white/5"
-              >
-                <input
-                  v-model.number="local.concurrent_limit"
-                  type="number"
-                  min="1"
-                  max="50"
-                  class="no-drag-region w-14 text-center bg-transparent border-none text-[15px] font-bold text-gray-900 dark:text-gray-100 outline-none p-0"
+              <div class="relative shrink-0 flex items-center">
+                <INumberStepper
+                  v-model="local.concurrent_limit"
+                  :min="1"
+                  :max="50"
+                  :width="40"
                 />
               </div>
             </div>
@@ -1720,15 +1780,12 @@ onUnmounted(() => {
                   批量导入账号时的最大并发数（1～20），值越大导入越快但更容易触发上游限流。
                 </div>
               </div>
-              <div
-                class="relative shrink-0 flex items-center bg-gray-100 dark:bg-black/20 rounded-[12px] px-3 py-1.5 focus-within:ring-2 focus-within:ring-ios-blue/30 border border-black/5 dark:border-white/5"
-              >
-                <input
-                  v-model.number="local.import_concurrency"
-                  type="number"
-                  min="1"
-                  max="20"
-                  class="no-drag-region w-14 text-center bg-transparent border-none text-[15px] font-bold text-gray-900 dark:text-gray-100 outline-none p-0"
+              <div class="relative shrink-0 flex items-center">
+                <INumberStepper
+                  v-model="local.import_concurrency"
+                  :min="1"
+                  :max="20"
+                  :width="40"
                 />
               </div>
             </div>
@@ -1799,7 +1856,7 @@ onUnmounted(() => {
         </section>
 
         <!-- 高级抓包与伪造专区 -->
-        <section>
+        <section id="sec-advanced">
           <h2 class="text-[13px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-3 px-2">
             高级抓包与诊断配置
           </h2>
@@ -2082,6 +2139,7 @@ onUnmounted(() => {
         </section>
       </div>
     </Transition>
+    </div>
   </div>
 </template>
 
