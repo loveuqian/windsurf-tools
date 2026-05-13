@@ -6,6 +6,7 @@ import { useMainViewStore } from "../stores/useMainViewStore";
 import {
   Activity,
   ArrowRightLeft,
+  BarChart3,
   Box,
   CheckCircle2,
   Clock,
@@ -691,8 +692,29 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
           </div>
         </div>
 
-        <div v-if="filteredRecords.length === 0" class="p-12 text-center text-gray-500 dark:text-gray-400">
-          {{ emptyStateMessage }}
+        <!-- ★ v1.5.0 iOS 风空状态 -->
+        <div
+          v-if="filteredRecords.length === 0"
+          class="flex flex-col items-center justify-center py-16 px-6 text-center"
+        >
+          <div class="relative mb-6">
+            <div class="w-24 h-24 rounded-[28px] bg-gradient-to-br from-violet-500/15 to-ios-blue/15 dark:from-violet-500/25 dark:to-ios-blue/25 flex items-center justify-center shadow-[0_10px_28px_rgba(99,102,241,0.12)]">
+              <BarChart3 class="w-11 h-11 text-violet-500 dark:text-violet-300" stroke-width="1.8" />
+            </div>
+            <div v-if="!records.length" class="absolute -bottom-1 -right-1 w-10 h-10 rounded-2xl bg-white dark:bg-[#1C1C1E] flex items-center justify-center shadow-md ring-2 ring-white/80 dark:ring-black/80">
+              <Activity class="w-5 h-5 text-emerald-500" stroke-width="2.6" />
+            </div>
+          </div>
+          <h3 class="text-[20px] font-bold text-ios-text dark:text-ios-textDark mb-2">
+            {{ records.length === 0 ? "暂无调用记录" : "当前筛选无结果" }}
+          </h3>
+          <p class="max-w-[400px] text-[13px] leading-relaxed text-gray-500 dark:text-gray-400">
+            {{
+              records.length === 0
+                ? "Cascade 对话后这里会实时显示 token 流水、模型分布与美金成本。先在 Dashboard 启动 MITM 代理后开始对话。"
+                : "尝试清空搜索 / 切换日期 / 调整状态筛选"
+            }}
+          </p>
         </div>
 
         <div v-else class="overflow-x-auto">

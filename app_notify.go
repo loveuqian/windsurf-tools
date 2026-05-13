@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -72,39 +73,95 @@ func (a *App) notify(kind NotifyKind, eventKey, title, body string) {
 }
 
 // sendSystemNotification 调系统命令发通知。失败时静默忽略（log debug）。
+//
+// 跨平台 fallback 策略（v1.6.0）：
+//   - macOS: osascript（系统自带，无 fallback 需要）
+//   - Windows: PowerShell BalloonTip — 中文 escape 用单引号；powershell.exe
+//     不可用时（rare）尝试 `pwsh`
+//   - Linux: notify-send → gdbus → 无可用命令时静默 + 日志提示
 func sendSystemNotification(kind NotifyKind, title, body string) {
-	// 标题/正文做简单转义，避免 shell 注入。允许中文 + 常见标点。
 	safeTitle := escapeForShell(title)
 	safeBody := escapeForShell(body)
 
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		// osascript 通知不支持自定义图标，但符号位置可以加 emoji 提示 kind
 		script := fmt.Sprintf(
 			`display notification "%s" with title "%s"`,
 			safeBody, kindEmoji(kind)+" "+safeTitle,
 		)
 		cmd = exec.Command("osascript", "-e", script)
 	case "windows":
-		// PowerShell BurntToast 不在系统默认，用更稳的 msg.exe / [System.Windows.Forms.MessageBox]
-		// 简化为 powershell + WPF balloon 通知。失败也无所谓。
-		psScript := fmt.Sprintf(
-			`[reflection.assembly]::loadwithpartialname('System.Windows.Forms') | Out-Null; `+
-				`$n = New-Object System.Windows.Forms.NotifyIcon; `+
-				`$n.Icon = [System.Drawing.SystemIcons]::Information; `+
-				`$n.BalloonTipTitle = '%s'; $n.BalloonTipText = '%s'; `+
-				`$n.Visible = $true; $n.ShowBalloonTip(5000); Start-Sleep -s 6; $n.Dispose()`,
-			safeTitle, safeBody,
-		)
-		cmd = exec.Command("powershell", "-Command", psScript)
-	default: // linux + others
-		cmd = exec.Command("notify-send", "-a", "Windsurf Tools", "-i", linuxIcon(kind),
-			kindEmoji(kind)+" "+safeTitle, safeBody)
+		cmd = buildWindowsNotifyCommand(kind, safeTitle, safeBody)
+		if cmd == nil {
+			utils.DLog("[Notify] Windows 未找到 powershell/pwsh，已降级到 app 内 toast")
+			return
+		}
+	default: // linux + bsd + others
+		cmd = buildLinuxNotifyCommand(kind, safeTitle, safeBody)
+		if cmd == nil {
+			utils.DLog("[Notify] Linux 未找到 notify-send/gdbus —— 执行 `sudo apt install libnotify-bin` 启用桌面通知")
+			return
+		}
 	}
 	if err := cmd.Start(); err != nil {
 		utils.DLog("[Notify] 触发系统通知失败: %v (kind=%s title=%q)", err, kind, title)
 	}
+}
+
+// buildWindowsNotifyCommand 选 powershell 或 pwsh，构造 BalloonTip 命令。
+// 中文标题/正文用单引号包裹避免双引号转义带来的 PowerShell parser 问题。
+func buildWindowsNotifyCommand(kind NotifyKind, title, body string) *exec.Cmd {
+	// 注意：传给 PowerShell 时 title/body 已经过 escapeForShell 处理（去掉 \ " 等）
+	// PowerShell 单引号 literal 字符串：内部 ' 双写成 ''
+	psTitle := strings.ReplaceAll(title, "'", "''")
+	psBody := strings.ReplaceAll(body, "'", "''")
+	iconType := "Information"
+	switch kind {
+	case NotifyKindError:
+		iconType = "Error"
+	case NotifyKindWarn:
+		iconType = "Warning"
+	}
+	psScript := fmt.Sprintf(
+		`Add-Type -AssemblyName System.Windows.Forms;`+
+			`$n = New-Object System.Windows.Forms.NotifyIcon;`+
+			`$n.Icon = [System.Drawing.SystemIcons]::%s;`+
+			`$n.BalloonTipTitle = '%s';`+
+			`$n.BalloonTipText = '%s';`+
+			`$n.Visible = $true;`+
+			`$n.ShowBalloonTip(5000);`+
+			`Start-Sleep -s 6;`+
+			`$n.Dispose()`,
+		iconType, psTitle, psBody,
+	)
+	// 优先用 powershell.exe (Windows 自带)；没有再试 pwsh.exe (PowerShell 7+)
+	for _, candidate := range []string{"powershell.exe", "powershell", "pwsh.exe", "pwsh"} {
+		if _, err := exec.LookPath(candidate); err == nil {
+			return exec.Command(candidate, "-NoProfile", "-NonInteractive", "-Command", psScript)
+		}
+	}
+	return nil
+}
+
+// buildLinuxNotifyCommand 选 notify-send 或 gdbus fallback。
+func buildLinuxNotifyCommand(kind NotifyKind, title, body string) *exec.Cmd {
+	if _, err := exec.LookPath("notify-send"); err == nil {
+		return exec.Command("notify-send", "-a", "Windsurf Tools",
+			"-i", linuxIcon(kind),
+			kindEmoji(kind)+" "+title, body)
+	}
+	// gdbus fallback（GNOME/glib 自带，比 notify-send 更可能存在）
+	if _, err := exec.LookPath("gdbus"); err == nil {
+		return exec.Command("gdbus", "call",
+			"--session", "--dest", "org.freedesktop.Notifications",
+			"--object-path", "/org/freedesktop/Notifications",
+			"--method", "org.freedesktop.Notifications.Notify",
+			"Windsurf Tools", "0", linuxIcon(kind),
+			kindEmoji(kind)+" "+title, body,
+			"[]", "{}", "5000")
+	}
+	return nil
 }
 
 func kindEmoji(kind NotifyKind) string {

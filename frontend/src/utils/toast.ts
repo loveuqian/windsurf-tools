@@ -24,6 +24,11 @@ export function showToast(message: string, kind: ToastKind = 'info', durationMs 
   }, durationMs)
 }
 
+/** 手动关闭 toast（用户点击或 swipe 触发，提前于 auto-dismiss） */
+export function dismissToast(id: number): void {
+  toastQueue.value = toastQueue.value.filter((t) => t.id !== id)
+}
+
 export interface ConfirmState {
   visible: boolean
   message: string

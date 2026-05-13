@@ -108,6 +108,8 @@ export function RotationPoolRefreshQuotasNow():Promise<void>;
 
 export function RotationPoolSwitchNow():Promise<string>;
 
+export function RunDiagnostics():Promise<main.DiagnoseReport>;
+
 export function SaveJailbreakOverrideFile(arg1:string):Promise<string>;
 
 export function SetSilentFromFlag(arg1:boolean):Promise<void>;

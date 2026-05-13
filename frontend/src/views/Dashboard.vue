@@ -2,7 +2,9 @@
 import { computed, onMounted, ref } from "vue";
 import {
   Activity,
+  AlertCircle,
   ArrowRight,
+  CheckCircle2,
   Globe,
   KeyRound,
   Link2,
@@ -10,7 +12,11 @@ import {
   ShieldCheck,
   TriangleAlert,
   Users,
+  X,
+  XCircle,
 } from "lucide-vue-next";
+import { APIInfo } from "../api/wails";
+import { showToast } from "../utils/toast";
 import PageLoadingSkeleton from "../components/common/PageLoadingSkeleton.vue";
 import SkeletonOverlay from "../components/common/SkeletonOverlay.vue";
 import MitmPanel from "../components/MitmPanel.vue";
@@ -54,6 +60,62 @@ onMounted(() => {
     relayStore.ensureStatusLoaded(),
   ]);
 });
+
+// ── v1.6.0 平台兼容性诊断 ──
+type DiagnoseStatus = "ok" | "warn" | "error" | "n/a";
+type DiagnoseCheckItem = {
+  id: string;
+  title: string;
+  status: DiagnoseStatus;
+  detail: string;
+  fix_hint?: string;
+};
+type DiagnoseReportData = {
+  platform: string;
+  arch: string;
+  ok: number;
+  warn: number;
+  error: number;
+  checks: DiagnoseCheckItem[];
+};
+
+const diagnostics = ref<DiagnoseReportData | null>(null);
+const diagnosticsLoading = ref(false);
+const showDiagnostics = ref(false);
+
+const handleRunDiagnostics = async () => {
+  diagnosticsLoading.value = true;
+  try {
+    const r = await APIInfo.runDiagnostics();
+    diagnostics.value = r as DiagnoseReportData;
+    showDiagnostics.value = true;
+    const summary = `${r.ok} 通过 / ${r.warn} 警告 / ${r.error} 错误`;
+    if (r.error > 0) {
+      showToast(`平台兼容性: ${summary}（有问题需修）`, "warning", 5000);
+    } else if (r.warn > 0) {
+      showToast(`平台兼容性: ${summary}（建议优化）`, "info", 4000);
+    } else {
+      showToast(`平台兼容性: 全部通过 ✓`, "success", 3000);
+    }
+  } catch (e) {
+    showToast(`诊断失败: ${String(e)}`, "error");
+  } finally {
+    diagnosticsLoading.value = false;
+  }
+};
+
+const diagnoseStatusClass = (status: DiagnoseStatus): string => {
+  switch (status) {
+    case "ok":
+      return "border-emerald-500/15 bg-emerald-500/[0.05]";
+    case "warn":
+      return "border-amber-500/20 bg-amber-500/[0.06]";
+    case "error":
+      return "border-rose-500/20 bg-rose-500/[0.07]";
+    default:
+      return "border-gray-300/30 bg-gray-100/30";
+  }
+};
 
 const booting = computed(
   () =>
@@ -244,19 +306,124 @@ const nextSteps = computed(() => {
               </div>
             </div>
 
-            <button
-              type="button"
-              class="no-drag-region inline-flex items-center gap-2 rounded-full border border-black/[0.06] bg-white/80 px-4 py-2 text-[12px] font-semibold text-ios-text shadow-sm transition-all ios-btn hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-ios-textDark"
-              :disabled="refreshing"
-              @click="refreshOverview"
-            >
-              <RefreshCcw
-                class="h-3.5 w-3.5"
-                :class="refreshing ? 'animate-spin' : ''"
-                stroke-width="2.4"
-              />
-              {{ refreshing ? "刷新中..." : "刷新总览" }}
-            </button>
+            <div class="flex flex-wrap gap-2">
+              <!-- ★ v1.6.0 平台兼容性检查 -->
+              <button
+                type="button"
+                class="no-drag-region inline-flex items-center gap-2 rounded-full border border-violet-500/15 bg-violet-500/10 px-4 py-2 text-[12px] font-semibold text-violet-700 dark:text-violet-300 shadow-sm transition-all ios-btn hover:bg-violet-500/15"
+                :disabled="diagnosticsLoading"
+                @click="handleRunDiagnostics"
+              >
+                <ShieldCheck
+                  class="h-3.5 w-3.5"
+                  :class="diagnosticsLoading ? 'animate-spin' : ''"
+                  stroke-width="2.4"
+                />
+                {{ diagnosticsLoading ? "检查中..." : "平台兼容性检查" }}
+              </button>
+              <button
+                type="button"
+                class="no-drag-region inline-flex items-center gap-2 rounded-full border border-black/[0.06] bg-white/80 px-4 py-2 text-[12px] font-semibold text-ios-text shadow-sm transition-all ios-btn hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-ios-textDark"
+                :disabled="refreshing"
+                @click="refreshOverview"
+              >
+                <RefreshCcw
+                  class="h-3.5 w-3.5"
+                  :class="refreshing ? 'animate-spin' : ''"
+                  stroke-width="2.4"
+                />
+                {{ refreshing ? "刷新中..." : "刷新总览" }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ★ v1.6.0 诊断结果 Modal -->
+        <div
+          v-if="showDiagnostics"
+          class="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/40 dark:bg-black/60 backdrop-blur-md p-0 sm:p-4"
+          @click.self="showDiagnostics = false"
+        >
+          <div
+            class="w-full sm:w-[min(100%,600px)] mx-auto bg-white dark:bg-[#1c1c1e] rounded-t-[28px] sm:rounded-[28px] shadow-[0_-20px_60px_rgba(0,0,0,0.3)] ring-1 ring-white/50 dark:ring-white/10 max-h-[80vh] flex flex-col overflow-hidden animate-sheet-up"
+          >
+            <!-- 头 -->
+            <div class="px-5 pt-4 pb-3 border-b border-black/[0.04] dark:border-white/[0.04] flex items-center justify-between">
+              <div>
+                <h3 class="text-[16px] font-bold text-gray-900 dark:text-gray-100">
+                  平台兼容性检查
+                </h3>
+                <p
+                  v-if="diagnostics"
+                  class="text-[12px] text-gray-500 dark:text-gray-400 mt-0.5"
+                >
+                  {{ diagnostics.platform }}/{{ diagnostics.arch }} ·
+                  <span class="text-emerald-600">{{ diagnostics.ok }} 通过</span> ·
+                  <span class="text-amber-600">{{ diagnostics.warn }} 警告</span> ·
+                  <span class="text-rose-600">{{ diagnostics.error }} 错误</span>
+                </p>
+              </div>
+              <button
+                type="button"
+                class="flex h-8 w-8 items-center justify-center rounded-full bg-black/[0.05] dark:bg-white/[0.08] hover:bg-black/[0.1]"
+                @click="showDiagnostics = false"
+              >
+                <X class="h-4 w-4" stroke-width="2.5" />
+              </button>
+            </div>
+
+            <!-- 列表 -->
+            <div class="flex-1 overflow-y-auto p-3 space-y-2">
+              <div
+                v-for="c in diagnostics?.checks ?? []"
+                :key="c.id"
+                class="rounded-[16px] border p-3 flex items-start gap-3"
+                :class="diagnoseStatusClass(c.status)"
+              >
+                <div class="shrink-0 mt-0.5">
+                  <CheckCircle2
+                    v-if="c.status === 'ok'"
+                    class="w-5 h-5 text-emerald-500"
+                    stroke-width="2.5"
+                  />
+                  <AlertCircle
+                    v-else-if="c.status === 'warn'"
+                    class="w-5 h-5 text-amber-500"
+                    stroke-width="2.5"
+                  />
+                  <XCircle
+                    v-else-if="c.status === 'error'"
+                    class="w-5 h-5 text-rose-500"
+                    stroke-width="2.5"
+                  />
+                  <span v-else class="w-5 h-5 inline-block rounded-full bg-gray-300" />
+                </div>
+                <div class="min-w-0 flex-1">
+                  <div class="text-[14px] font-bold text-gray-900 dark:text-gray-100">
+                    {{ c.title }}
+                  </div>
+                  <div class="text-[12px] text-gray-600 dark:text-gray-300 mt-0.5 leading-relaxed">
+                    {{ c.detail }}
+                  </div>
+                  <div
+                    v-if="c.fix_hint"
+                    class="mt-1.5 text-[11.5px] text-amber-700 dark:text-amber-300 font-mono bg-amber-500/10 px-2 py-1 rounded"
+                  >
+                    💡 {{ c.fix_hint }}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="p-3 border-t border-black/[0.04] dark:border-white/[0.04]">
+              <button
+                type="button"
+                class="w-full py-3 rounded-[14px] bg-black/[0.05] dark:bg-white/[0.08] text-[14px] font-bold text-gray-800 dark:text-gray-200 hover:bg-black/[0.08] transition-colors"
+                @click="showDiagnostics = false"
+              >
+                关闭
+              </button>
+            </div>
           </div>
         </div>
 

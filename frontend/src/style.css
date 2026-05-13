@@ -122,20 +122,47 @@ html.dark .app-root {
   }
 }
 
-/* Dark mode scrollbar */
-html.dark ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* ── iOS-style 全局滚动条 v1.5.0 ──
+   Webview 默认 14px 太粗，盖住卡片视觉。用 6px 细半透明 iOS 风。
+   light/dark 各自有 thumb 颜色；hover 加深；corner 隐藏。 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
 }
-html.dark ::-webkit-scrollbar-track {
+::-webkit-scrollbar-track {
   background: transparent;
 }
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.32);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Dark mode 镜像 */
 html.dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.18);
+  background-clip: content-box;
 }
 html.dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.32);
+  background-clip: content-box;
+}
+
+/* Firefox 兼容 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+}
+html.dark * {
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
 }
 
 /* Fix form elements in dark mode */

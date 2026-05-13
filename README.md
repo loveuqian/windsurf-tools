@@ -1,7 +1,7 @@
 # Windsurf Tools 🏄‍♂️
 
-[![Version](https://img.shields.io/badge/Version-v1.4.0-success)](https://github.com/seven7763/windsurf-tools/releases)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue)](#运行环境--prerequisites)
+[![Version](https://img.shields.io/badge/Version-v1.8.0-success)](https://github.com/seven7763/windsurf-tools/releases)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)](#运行环境--prerequisites)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Built with Wails](https://img.shields.io/badge/Built%20with-Wails%20v2-red)](https://wails.io/)
 
@@ -77,20 +77,77 @@
 | `windsurf-tools-wails-windows-amd64.zip` | Windows amd64 | Windows 单文件压缩包 |
 | `windsurf-tools-wails-macos-intel-amd64.zip` | macOS Intel | 打包后的 `.app` 压缩包 |
 | `windsurf-tools-wails-macos-apple-silicon-arm64.zip` | macOS Apple Silicon | 打包后的 `.app` 压缩包 |
+| `windsurf-tools-wails-linux-amd64.zip` | Linux amd64 (24.04+) | 基于 WebKit2GTK 4.1 |
+| `windsurf-tools-wails-linux-amd64-legacy.zip` | Linux amd64 (22.04) | 基于 WebKit2GTK 4.0（旧发行版） |
 | `SHA256SUMS.txt` | 全平台 | 所有发布文件的 SHA256 校验 |
 
 > 本程序在 Windows 下默认请求管理员运行以实现完整的代理劫持（Hosts、CA安装配置）。请放心授予或采用受控模式运行。macOS 环境需要处理好初次的 Gatekeeper。
 
 ---
 
-## 💻 运行环境 | Prerequisites 
+## 💻 运行环境 + 安装指南 | Prerequisites & Install Guide
 
 ### Windows
-- Windows 10 / 11 `amd64` 
-- [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) 依赖
+- Windows 10 / 11 `amd64`
+- [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) 依赖（Win 11 自带；Win 10 可能需安装）
 
-### macOS
-- 支持 Intel (`amd64`) 及 Apple Silicon (`arm64`) 双架构。由于使用跨平台 Webview UI，苹果系统亦可享用统一的视觉体验。
+```powershell
+# 下载 windsurf-tools-wails.exe
+# 双击运行 → 接受 UAC 提权（默认 admin manifest）
+# 如果提示「未发布的应用」: 右键 → 属性 → 解除锁定
+```
+
+### macOS（Intel / Apple Silicon）
+
+```bash
+# 1) 下载对应 zip 解压，把 .app 拖到 /Applications
+# 2) 首次启动绕过 Gatekeeper:
+xattr -d com.apple.quarantine /Applications/windsurf-tools-wails.app
+open /Applications/windsurf-tools-wails.app
+# 或: 右键 → 打开（Gatekeeper 会让你再次确认）
+```
+
+### Linux
+
+依赖装好后直接运行 binary，无需额外安装步骤。
+
+```bash
+# Debian / Ubuntu
+sudo apt install libnotify-bin libwebkit2gtk-4.1-0 xdg-utils policykit-1 ca-certificates
+
+# Fedora / RHEL / CentOS
+sudo dnf install libnotify webkit2gtk4.1 xdg-utils polkit ca-certificates
+
+# Arch / Manjaro
+sudo pacman -S libnotify webkit2gtk-4.1 xdg-utils polkit ca-certificates
+
+# 然后:
+unzip windsurf-tools-wails-linux-amd64.zip
+chmod +x windsurf-tools-wails
+./windsurf-tools-wails
+```
+
+如果遇到 `error while loading shared libraries: libwebkit2gtk-4.1.so.0` 类报错，说明缺 WebKit2GTK 4.1。Ubuntu 22.04 用户可下载 `linux-amd64-legacy.zip`（基于 WebKit2GTK 4.0）。
+
+---
+
+## 🌐 平台特性矩阵 | Platform Feature Matrix
+
+| 功能 | macOS | Windows | Linux |
+|---|:---:|:---:|:---:|
+| MITM 代理 (核心) | ✅ | ✅ | ✅ |
+| 号池轮换 / Pin / 池 | ✅ | ✅ | ✅ |
+| OpenAI Relay | ✅ | ✅ | ✅ |
+| Cascade 破限注入 | ✅ | ✅ | ✅ |
+| Clash IP 智能切换 | ✅ | ✅ | ✅ |
+| CA 自动安装 | ✅ | ✅ | ⚠️ 需 `ca-certificates` |
+| Hosts 自动写入 | ✅ | ✅ (UAC) | ✅ (pkexec/sudo) |
+| 桌面通知 | ✅ | ✅ | ⚠️ 需 `libnotify-bin` |
+| 文件管理器集成 | ✅ Finder | ✅ Explorer | ⚠️ 需 `xdg-utils` |
+| 系统托盘 | ✅ | ✅ | ⚠️ 依赖桌面环境 |
+| 配置导出/导入 | ✅ | ✅ | ✅ |
+
+> Dashboard 顶部「平台兼容性检查」按钮可一键诊断当前平台所有依赖是否就绪。
 
 ---
 
@@ -135,6 +192,61 @@ wails build
 ---
 
 ## 🔧 最近修复 | Recent Fixes
+
+### v1.8.0 (2026-05-14)
+
+**新增「关于」+「帮助」视图 + 法律免责声明 | About/Help/Legal**
+
+- **新视图 `About.vue`** — 三栏 QR 码区：作者微信 (Seven77078) / 赞赏码 / 微信交流群（3 张图轮播）+ 点击放大 Lightbox + 复制微信号按钮 + 仓库链接。所有图嵌入 vite hash 资源。
+- **新视图 `Help.vue` (7 章 FAQ)** — iOS Settings disclosure 风折叠，覆盖：
+  - **1. 我该选哪种模式？** — IDE 直接切号 vs MITM 代理 对比 (Switch-Account-Local vs SwitchMitmToAccount)
+  - **2. API Key 是什么？怎么获取？** — sk-ws- 前缀 + 来源
+  - **3. 怎么导入账号？** — 4 种凭证自动识别 + 去重
+  - **4. MITM 代理原理** — CA 证书 + Hosts + protobuf F20/F32 字段替换
+  - **5. 号池轮换 + Pin + Pool** — 3 个自动触发点 + 手动锁定 + 轮换池
+  - **6. Clash IP 智能启用** — 防限速 + type-aware 过滤
+  - **7. Cascade 破限注入** — 原理 + 4 个预设风险对比表
+- **法律免责声明组件 `LegalDisclaimer.vue`** — 6 条核心：用途限定 / 自负风险 / 账号合法性 / 本地处理 / 破限风险 / 开源免费
+- **Sidebar 底部双按钮入口** — 「帮助」(蓝) + 「关于」(红)，不占主菜单
+- **章节搜索** — Help 页顶部搜索框，按关键词过滤章节
+
+### v1.7.0 (2026-05-14)
+
+**完整 Linux/Win 支持 + 用户安装文档**
+
+- **README 三平台完整安装指南** — Debian/Ubuntu + Fedora/RHEL + Arch/Manjaro 的 apt/dnf/pacman 依赖一行命令；Windows UAC + WebView2 提示；macOS Gatekeeper `xattr -d com.apple.quarantine` 绕过。WebKit2GTK 4.0 vs 4.1 区分（Ubuntu 22.04 用 legacy zip）
+- **平台特性矩阵** — 11 项功能 × 3 平台 ✅/⚠️ 一目了然
+- **Releases 表加 Linux artifacts** — `linux-amd64.zip` (24.04+) + `linux-amd64-legacy.zip` (22.04) 两个版本
+- **Linux pkexec → sudo fallback** — `privileged_exec.go` 实际已实现 (`pkexec → sudo → 友好错误`)
+- **README Platform badge** — 加 Linux
+
+### v1.6.0 (2026-05-14)
+
+**跨平台兼容性 全面加固 | Cross-platform Audit**
+
+- **平台兼容性诊断 API** — 新增 `RunDiagnostics()` 后端方法，一键检测 7 大类平台依赖：桌面通知 / 文件打开 / 提权 / CA 证书工具 / App 数据目录可写 / Windsurf 安装 / Clash 控制器 / (Windows) WebView2。每项返回 `ok / warn / error / n/a` + 具体修复建议
+- **Dashboard「平台兼容性检查」紫色按钮** — 点击弹底部 sheet modal 展示完整诊断报告：每项带 ✓/⚠/✗ 图标 + 详细说明 + 蓝色 💡 修复 hint 命令（如 `sudo apt install libnotify-bin`）
+- **Linux 桌面通知 fallback** — `notify-send` 缺时降级 `gdbus call` (GNOME/glib 自带，更可能存在)，都没有时静默 + 日志友好提示安装方法
+- **Linux 文件打开器 fallback 链** — `xdg-open → gio open → kde-open5 → exo-open → gnome-open`，按发行版常见优先级挑可用的，全失败时返回友好错误带 `sudo apt install xdg-utils`
+- **Windows PowerShell 通知 escape 修复** — 改用单引号 literal 字符串（内部 `'` 双写）+ 按 kind 选 SystemIcons (Information/Warning/Error)；powershell.exe 缺时 fallback pwsh.exe (PowerShell 7+)
+- **Linux 提权 pkexec → sudo fallback** — 自动检测命令存在性 + 降级提示
+- **README 加 Linux 平台标记**
+
+**新增组件 | New Components**
+
+- `app_diagnose.go`: RunDiagnostics 跨平台诊断 + 9 个 check 实现 + intToStr helper
+- `app_diagnose_test.go`: 5 个测试覆盖 report 结构 / ID 唯一性 / status 枚举 / intToStr / windsurf candidates
+
+### v1.5.0 (2026-05-14)
+
+**iOS 化二期 全方位打磨 | iOS-Polish v2**
+
+- **全局滚动条 iOS 化** — Webview 默认 14px 太粗，改为 8px 细半透明 (rgba 18% thumb, hover 32%) + 圆角 6 + content-box clip + corner 透明。Light/Dark 镜像 + Firefox `scrollbar-width: thin` 兼容。**所有滚动区域立即 iOS 化**
+- **IToast 重做** — 从底部小条改成**顶部下滑 22px 大圆角 glass blur** 卡片：弹簧 cubic-bezier 入场（`0.34, 1.56, 0.64, 1`）+ 多 toast 堆叠 stagger + hover 显示 ✕ 关闭 + 点 toast 任意位置可关 + 4 种 tone（success/绿、error/红、warning/黄、info/蓝）大色块 icon + `dismissToast(id)` 手动关闭 API
+- **IConfirm 改成底部 Action Sheet 风** — iOS HIG 标准：底部弹（移动端）/ 中心弹（桌面 sm+），主按钮上 + 取消下 vertical stack，destructive 时主按钮红 + Trash 图标 + 大 AlertTriangle warning icon。ESC / Enter / 遮罩点击都能关
+- **ISettingRow 新组件** — iOS Settings.app 风格行（title + description / slot 控件 / 底部细分隔线 + destructive 模式）。等高居中布局 + 自适应窄屏堆叠 + extra slot 给二级附加内容（折叠/警告条）
+- **Cleanup / Usage 空状态升级** — 复用 Accounts 大渐变 icon 模板：Usage 用 BarChart3+Activity 角标区分「无记录 vs 无筛选结果」；Cleanup 加载中改为大型旋转 icon + 友好文案
+- **新增 `dismissToast(id)` API** — `utils/toast.ts` 暴露给 IToast 手动关闭使用
 
 ### v1.4.0 (2026-05-14)
 

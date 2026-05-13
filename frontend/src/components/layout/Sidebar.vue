@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Activity, Globe, HardDriveDownload, Hash, LayoutDashboard, MessageSquare, Settings, Shield, User, Users } from 'lucide-vue-next'
+import { Activity, BookOpen, Globe, HardDriveDownload, Hash, Heart, LayoutDashboard, MessageSquare, Settings, Shield, User, Users } from 'lucide-vue-next'
 import { useAccountStore } from '../../stores/useAccountStore'
 import { useMitmStatusStore } from '../../stores/useMitmStatusStore'
 import { PRIMARY_POOL_LABEL, type ShellViewTab } from '../../utils/appMode'
@@ -137,6 +137,36 @@ const boundSessions = computed(() => {
         <Shield class="h-3.5 w-3.5 shrink-0" stroke-width="2.4" />
         健康 {{ mitmStore.status?.pool_status?.filter((item) => item.healthy).length ?? 0 }} / {{ mitmStore.status?.pool_status?.length ?? 0 }}
       </div>
+    </div>
+
+    <!-- ★ v1.8.0 底部 Help / About 入口 -->
+    <div class="mx-3 mt-3 flex gap-2">
+      <button
+        type="button"
+        class="no-drag-region flex-1 flex items-center justify-center gap-1.5 py-2 rounded-[12px] text-[12px] font-bold transition-all ios-btn"
+        :class="
+          activeTab === 'Help'
+            ? 'bg-ios-blue text-white shadow-sm'
+            : 'bg-black/[0.04] text-gray-600 dark:bg-white/[0.06] dark:text-gray-400 hover:bg-black/[0.08] dark:hover:bg-white/[0.1]'
+        "
+        @click="emit('update:activeTab', 'Help')"
+      >
+        <BookOpen class="h-3.5 w-3.5" stroke-width="2.4" />
+        帮助
+      </button>
+      <button
+        type="button"
+        class="no-drag-region flex-1 flex items-center justify-center gap-1.5 py-2 rounded-[12px] text-[12px] font-bold transition-all ios-btn"
+        :class="
+          activeTab === 'About'
+            ? 'bg-rose-500 text-white shadow-sm'
+            : 'bg-black/[0.04] text-gray-600 dark:bg-white/[0.06] dark:text-gray-400 hover:bg-black/[0.08] dark:hover:bg-white/[0.1]'
+        "
+        @click="emit('update:activeTab', 'About')"
+      >
+        <Heart class="h-3.5 w-3.5" stroke-width="2.4" />
+        关于
+      </button>
     </div>
   </nav>
 </template>

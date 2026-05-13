@@ -104,6 +104,22 @@ export const APIInfo = {
   exportSettings: (AppHooks as any).ExportSettings as () => Promise<string>,
   importSettings: (AppHooks as any).ImportSettings as (jsonText: string) => Promise<void>,
 
+  // v1.6.0 跨平台兼容性诊断
+  runDiagnostics: (AppHooks as any).RunDiagnostics as () => Promise<{
+    platform: string;
+    arch: string;
+    ok: number;
+    warn: number;
+    error: number;
+    checks: Array<{
+      id: string;
+      title: string;
+      status: 'ok' | 'warn' | 'error' | 'n/a';
+      detail: string;
+      fix_hint?: string;
+    }>;
+  }>,
+
   // Clash IP 轮换
   testClashController: (AppHooks as any).TestClashController,
   listClashGroupNodes: (AppHooks as any).ListClashGroupNodes,

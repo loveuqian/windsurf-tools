@@ -231,13 +231,17 @@ onMounted(() => {
         </div>
       </div>
 
-      <div v-if="loadingDisk && !diskUsage" class="text-center py-8">
-        <Loader2 class="w-6 h-6 animate-spin mx-auto text-ios-blue" />
-        <div
-          class="mt-2 text-sm text-ios-textSecondary dark:text-ios-textSecondaryDark"
-        >
-          分析中...
+      <!-- ★ v1.5.0 加载中 iOS 风 -->
+      <div v-if="loadingDisk && !diskUsage" class="flex flex-col items-center justify-center py-12 text-center">
+        <div class="w-20 h-20 rounded-[24px] bg-gradient-to-br from-ios-blue/15 to-violet-500/15 dark:from-ios-blue/25 dark:to-violet-500/25 flex items-center justify-center mb-4 shadow-[0_8px_24px_rgba(37,99,235,0.12)]">
+          <Loader2 class="w-9 h-9 text-ios-blue ios-spinner" stroke-width="2.4" />
         </div>
+        <h3 class="text-[16px] font-bold text-ios-text dark:text-ios-textDark mb-1">
+          正在扫描磁盘占用…
+        </h3>
+        <p class="text-[12.5px] text-gray-500 dark:text-gray-400">
+          统计 Cascade 对话缓存 / 渲染器缓存 / 启动缓存等
+        </p>
       </div>
 
       <template v-else-if="diskUsage">

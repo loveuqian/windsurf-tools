@@ -210,6 +210,10 @@ export function RotationPoolSwitchNow() {
   return window['go']['main']['App']['RotationPoolSwitchNow']();
 }
 
+export function RunDiagnostics() {
+  return window['go']['main']['App']['RunDiagnostics']();
+}
+
 export function SaveJailbreakOverrideFile(arg1) {
   return window['go']['main']['App']['SaveJailbreakOverrideFile'](arg1);
 }
