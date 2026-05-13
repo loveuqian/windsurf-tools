@@ -11,10 +11,28 @@ type Settings struct {
 	AutoSwitchPlanFilter string `json:"auto_switch_plan_filter"`
 	// AutoSwitchOnQuotaExhausted 在自动同步额度后，若当前 Windsurf 登录账号额度用尽则尝试切到下一席（依赖 windsurf_auth 与号池匹配）
 	AutoSwitchOnQuotaExhausted bool `json:"auto_switch_on_quota_exhausted"`
+
+	// ── 手动锁定（Manual Pin） ──
+	// 用户手动切到某账号后自动开启 Pin，所有自动切换（额度耗尽 / 限速 /
+	// 热轮询）都跳过；只能 UnpinManualAccount 主动解除。这样用户能 100%
+	// 控制当前激活的账号，避免「明明切到 user-A 转眼又被自动换走」。
+	ManualPinEnabled   bool   `json:"manual_pin_enabled"`
+	ManualPinAccountID string `json:"manual_pin_account_id"`
+
+	// ── 轮换池（Rotation Pool） ──
+	// 用户选 N 个账号进池，定时 + 额度双触发只在池内来回切。池外账号完全
+	// 不参与自动轮换。池内账号高频刷额度（1 分钟默认）让 UI 实时显示。
+	RotationPoolEnabled         bool     `json:"rotation_pool_enabled"`
+	RotationPoolAccountIDs      []string `json:"rotation_pool_account_ids"`
+	RotationPoolIntervalMin     int      `json:"rotation_pool_interval_min"`      // 定时切间隔，默认 5，范围 [1,60]
+	RotationPoolQuotaRefreshMin int      `json:"rotation_pool_quota_refresh_min"` // 额度刷新间隔，默认 1，范围 [1,10]
 	// QuotaHotPollSeconds 开启「用尽切号」时，仅对当前 Windsurf 会话高频拉额度（秒）；号池其余账号只走 QuotaRefreshPolicy 的定期同步，不在此轮询。范围 5～60
 	QuotaHotPollSeconds int `json:"quota_hot_poll_seconds"`
 	// MinimizeToTray 点击关闭时最小化到系统托盘而不退出（需系统支持托盘图标）
 	MinimizeToTray bool `json:"minimize_to_tray"`
+	// DesktopNotifications 开启时关键事件（Pin 解除 / 额度耗尽 / Clash 错误等）
+	// 会触发系统通知中心；关闭则只在 app 内部 toast。默认 true。
+	DesktopNotifications bool `json:"desktop_notifications"`
 	// SilentStart 启动时不显示主窗口（仍可在托盘打开；也可用命令行 --silent）
 	SilentStart bool `json:"silent_start"`
 
@@ -97,8 +115,15 @@ func DefaultSettings() Settings {
 		QuotaCustomIntervalMinutes:  360,
 		AutoSwitchPlanFilter:        "all",
 		AutoSwitchOnQuotaExhausted:  true,
+		ManualPinEnabled:            false,
+		ManualPinAccountID:          "",
+		RotationPoolEnabled:         false,
+		RotationPoolAccountIDs:      nil,
+		RotationPoolIntervalMin:     5,
+		RotationPoolQuotaRefreshMin: 1,
 		QuotaHotPollSeconds:         12,
 		MinimizeToTray:              false,
+		DesktopNotifications:        true,
 		SilentStart:                 false,
 		MitmDebugDump:               false,
 		MitmFullCapture:             false,

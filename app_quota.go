@@ -182,6 +182,9 @@ func (a *App) pollCurrentSessionQuotaAndMaybeSwitch() {
 		utils.DLog("[热轮询] 跳过: AutoRefreshQuotas=%v AutoSwitch=%v", settings.AutoRefreshQuotas, settings.AutoSwitchOnQuotaExhausted)
 		return
 	}
+	// Pin 优先：手动锁定时连热轮询额度刷新都做（让用户看到新数据），但
+	// 跳过最后的自动切号步骤。pin 中拉额度仍有意义；切号必须用户手动。
+	pinned := settings.ManualPinEnabled
 
 	curID := a.findCurrentMonitoredAccountID()
 	if curID == "" {
@@ -237,6 +240,10 @@ func (a *App) pollCurrentSessionQuotaAndMaybeSwitch() {
 	utils.DLog("[热轮询] ★ %s 额度用尽! (daily=%s weekly=%s plan=%s) → 触发切号", copyAcc.Email, copyAcc.DailyRemaining, copyAcc.WeeklyRemaining, copyAcc.PlanName)
 	utils.DLog("[热轮询/reset] decision account=%s result=exhausted-switch daily={%s} weekly={%s}",
 		labelAccountResult(copyAcc), describeQuotaResetField(copyAcc.DailyRemaining, copyAcc.DailyResetAt, copyAcc.LastQuotaUpdate, time.Now()), describeQuotaResetField(copyAcc.WeeklyRemaining, copyAcc.WeeklyResetAt, copyAcc.LastQuotaUpdate, time.Now()))
+	if pinned {
+		utils.DLog("[热轮询] ManualPin 生效 (pin=%s)，已刷额度但跳过切号", settings.ManualPinAccountID[:min(8, len(settings.ManualPinAccountID))])
+		return
+	}
 	if next, err := a.rotateMitmToNextAvailable(curID, settings.AutoSwitchPlanFilter); err == nil {
 		utils.DLog("[热轮询] MITM轮换成功 → %s", next.Email)
 		a.lastQuotaHotSwitchMu.Lock()
@@ -352,7 +359,8 @@ func (a *App) refreshDueQuotas() {
 		utils.DLog("[额度同步] 完成: 更新=%d/%d updatedPool=%v", updatedCount, len(dueAccounts), updatedPool)
 	}
 
-	if settings.AutoSwitchOnQuotaExhausted {
+	// Pin 优先：手动锁定时跳过自动切（额度同步本身已完成不影响）
+	if settings.AutoSwitchOnQuotaExhausted && !settings.ManualPinEnabled {
 		curID := a.findCurrentMonitoredAccountID()
 		if curID != "" {
 			if cur, err := a.store.GetAccount(curID); err == nil && utils.AccountQuotaExhausted(&cur) {
@@ -360,6 +368,8 @@ func (a *App) refreshDueQuotas() {
 				switchAfterUnlock.planFilter = settings.AutoSwitchPlanFilter
 			}
 		}
+	} else if settings.ManualPinEnabled && settings.AutoSwitchOnQuotaExhausted {
+		utils.DLog("[额度同步] ManualPin 生效，跳过定期同步后的自动切号")
 	}
 
 	if updatedPool {

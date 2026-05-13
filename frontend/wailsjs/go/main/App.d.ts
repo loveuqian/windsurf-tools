@@ -32,6 +32,8 @@ export function DeleteFreePlanAccounts():Promise<number>;
 
 export function ExportAccountsByGroup(arg1:string):Promise<string>;
 
+export function ExportSettings():Promise<string>;
+
 export function GetAccount(arg1:string):Promise<models.Account>;
 
 export function GetAllAccounts():Promise<Array<models.Account>>;
@@ -43,6 +45,8 @@ export function GetClashRotatorRunning():Promise<boolean>;
 export function GetJailbreakDefaultOverride():Promise<string>;
 
 export function GetJailbreakRuntime():Promise<main.JailbreakRuntime>;
+
+export function GetManualPinStatus():Promise<main.ManualPinStatus>;
 
 export function GetMitmCAPath():Promise<string>;
 
@@ -59,6 +63,8 @@ export function GetOpenAIRelayStatus():Promise<services.OpenAIRelayStatus>;
 export function GetPerformanceTips():Promise<Array<main.PerformanceTip>>;
 
 export function GetProtoDumpDir():Promise<string>;
+
+export function GetRotationPoolStatus():Promise<main.RotationPoolStatus>;
 
 export function GetSettings():Promise<models.Settings>;
 
@@ -80,6 +86,8 @@ export function ImportByJWT(arg1:Array<main.JWTItem>):Promise<Array<main.ImportR
 
 export function ImportByRefreshToken(arg1:Array<main.TokenItem>):Promise<Array<main.ImportResult>>;
 
+export function ImportSettings(arg1:string):Promise<void>;
+
 export function ListClashGroupNodes(arg1:string,arg2:string,arg3:string):Promise<Array<string>>;
 
 export function ListJailbreakPresets():Promise<Array<services.JailbreakPreset>>;
@@ -95,6 +103,10 @@ export function RefreshAllTokens():Promise<Record<string, string>>;
 export function ResetJailbreakStats():Promise<void>;
 
 export function RevealJailbreakOverrideFolder():Promise<string>;
+
+export function RotationPoolRefreshQuotasNow():Promise<void>;
+
+export function RotationPoolSwitchNow():Promise<string>;
 
 export function SaveJailbreakOverrideFile(arg1:string):Promise<string>;
 
@@ -135,5 +147,7 @@ export function UnbindMitmSession(arg1:string):Promise<boolean>;
 export function UninstallMitmCA():Promise<void>;
 
 export function UninstallMitmHosts():Promise<void>;
+
+export function UnpinManualAccount():Promise<void>;
 
 export function UpdateSettings(arg1:models.Settings):Promise<void>;

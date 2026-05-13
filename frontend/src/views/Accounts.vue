@@ -3,11 +3,13 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useAccountStore } from "../stores/useAccountStore";
 import { useMainViewStore } from "../stores/useMainViewStore";
 import { useMitmStatusStore } from "../stores/useMitmStatusStore";
+import { useSettingsStore } from "../stores/useSettingsStore";
 import ImportModal from "../components/accounts/ImportModal.vue";
 import AccountCardSkeleton from "../components/accounts/AccountCardSkeleton.vue";
 import {
   ArrowRightLeft,
   Plus,
+  Shuffle,
   Trash2,
   RefreshCcw,
   Users,
@@ -369,6 +371,75 @@ const handleLoginToWindsurf = async (acc: models.Account) => {
 
 const isAccountSwitching = (id: string) =>
   mitmStore.switchLoading && mitmStore.switchTargetAccountId === id;
+
+// ── v1.3.0 Pin / 池徽章 + 卡内操作 ──
+const settingsStore = useSettingsStore();
+onMounted(() => {
+  // settings 在其他 view 里可能没拉过；卡片要读 manual_pin / rotation_pool 字段
+  void settingsStore.fetchSettings();
+});
+
+const isAccountPinned = (acc: models.Account) =>
+  settingsStore.settings?.manual_pin_enabled === true &&
+  settingsStore.settings?.manual_pin_account_id === acc.id;
+
+const isAccountInRotationPool = (acc: models.Account) =>
+  settingsStore.settings?.rotation_pool_enabled === true &&
+  (settingsStore.settings?.rotation_pool_account_ids || []).includes(acc.id);
+
+const rotationPoolActive = () =>
+  settingsStore.settings?.rotation_pool_enabled === true;
+
+const handleUnpinFromCard = async () => {
+  try {
+    await APIInfo.unpinManualAccount();
+    await settingsStore.fetchSettings(true);
+    showToast("已解锁，自动切换已恢复", "success");
+  } catch (e: unknown) {
+    showToast(`解锁失败: ${String(e)}`, "error");
+  }
+};
+
+const handleTogglePoolMember = async (acc: models.Account) => {
+  const s = settingsStore.settings;
+  if (!s) return;
+  const ids = [...(s.rotation_pool_account_ids || [])];
+  const idx = ids.indexOf(acc.id);
+  const adding = idx < 0;
+  if (adding) {
+    ids.push(acc.id);
+  } else {
+    ids.splice(idx, 1);
+  }
+  try {
+    await APIInfo.updateSettings({
+      ...s,
+      rotation_pool_account_ids: ids,
+    } as models.Settings);
+    await settingsStore.fetchSettings(true);
+    showToast(
+      adding ? `已加入轮换池: ${acc.email}` : `已移出轮换池: ${acc.email}`,
+      "success",
+    );
+  } catch (e: unknown) {
+    showToast(`修改池成员失败: ${String(e)}`, "error");
+  }
+};
+
+const handleCopyApiKey = async (acc: models.Account) => {
+  const key = (acc.windsurf_api_key || "").trim();
+  if (!key) {
+    showToast("该账号未配置 API Key", "warning");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(key);
+    const short = key.length > 16 ? key.slice(0, 12) + "…" + key.slice(-4) : key;
+    showToast(`已复制 ${short}`, "success");
+  } catch (e) {
+    showToast(`复制失败: ${String(e)}`, "error");
+  }
+};
 
 // ═══ 按套餐分组操作 ═══
 const planGroupFilter = ref("");
@@ -1093,6 +1164,22 @@ const getPlanAccentClass = (acc: models.Account) => {
                   >
                     {{ getBoundSessionCount(acc) }} 会话
                   </span>
+                  <!-- ★ v1.3.0 Pin 徽章 -->
+                  <span
+                    v-if="isAccountPinned(acc)"
+                    class="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-amber-500/15 border border-amber-500/30 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300"
+                    title="已锁定 — 自动切换通道全部暂停。点击右侧按钮解锁。"
+                  >
+                    🔒 已锁定
+                  </span>
+                  <!-- ★ v1.3.0 池徽章 -->
+                  <span
+                    v-if="isAccountInRotationPool(acc)"
+                    class="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-violet-500/15 border border-violet-500/30 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300"
+                    title="此账号在轮换池内，会被定时切 + 额度耗尽时优先选中"
+                  >
+                    🔁 池内
+                  </span>
                 </div>
 
                 <div
@@ -1135,6 +1222,50 @@ const getPlanAccentClass = (acc: models.Account) => {
                     @click="handleRefreshOneQuota(acc.id, acc.email)"
                   >
                     <RefreshCcw class="h-[15px] w-[15px]" stroke-width="2.5" />
+                  </button>
+                  <!-- ★ v1.3.0 复制 API Key -->
+                  <button
+                    v-if="hasApiKey(acc)"
+                    type="button"
+                    class="flex h-[30px] w-[30px] min-w-[30px] items-center justify-center rounded-full bg-white text-gray-600 shadow-sm transition hover:scale-105 dark:bg-black/40 dark:text-gray-300 ios-btn"
+                    title="复制 sk-ws- API Key 到剪贴板"
+                    @click="handleCopyApiKey(acc)"
+                  >
+                    <KeyRound class="h-[15px] w-[15px]" stroke-width="2.5" />
+                  </button>
+                  <!-- ★ v1.3.0 池成员切换（仅池启用时显示） -->
+                  <button
+                    v-if="rotationPoolActive()"
+                    type="button"
+                    class="flex h-[30px] w-[30px] min-w-[30px] items-center justify-center rounded-full shadow-sm transition hover:scale-105 ios-btn"
+                    :class="
+                      isAccountInRotationPool(acc)
+                        ? 'bg-violet-500 text-white hover:bg-violet-600'
+                        : 'bg-white text-violet-600 dark:bg-black/40'
+                    "
+                    :title="
+                      isAccountInRotationPool(acc)
+                        ? '点击移出轮换池'
+                        : '点击加入轮换池（定时切 + 额度切只在池内）'
+                    "
+                    @click="handleTogglePoolMember(acc)"
+                  >
+                    <Shuffle
+                      v-if="!isAccountInRotationPool(acc)"
+                      class="h-[15px] w-[15px]"
+                      stroke-width="2.5"
+                    />
+                    <span v-else class="text-[14px] font-black">✓</span>
+                  </button>
+                  <!-- ★ v1.3.0 Pin 解锁（仅本卡 pin 时显示） -->
+                  <button
+                    v-if="isAccountPinned(acc)"
+                    type="button"
+                    class="flex h-[30px] w-[30px] min-w-[30px] items-center justify-center rounded-full bg-amber-500 text-white shadow-sm transition hover:scale-105 hover:bg-amber-600 ios-btn"
+                    title="解除锁定，恢复自动切换"
+                    @click="handleUnpinFromCard"
+                  >
+                    <span class="text-[12px] font-black">🔓</span>
                   </button>
                   <button
                     type="button"

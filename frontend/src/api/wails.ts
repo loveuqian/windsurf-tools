@@ -78,6 +78,32 @@ export const APIInfo = {
   revealJailbreakOverrideFolder: (AppHooks as any).RevealJailbreakOverrideFolder as () => Promise<string>,
   resetJailbreakStats: (AppHooks as any).ResetJailbreakStats as () => Promise<void>,
 
+  // v1.3.0 手动锁定 + 轮换池
+  getManualPinStatus: (AppHooks as any).GetManualPinStatus as () => Promise<{
+    enabled: boolean; account_id?: string; email?: string; nickname?: string;
+  }>,
+  unpinManualAccount: (AppHooks as any).UnpinManualAccount as () => Promise<void>,
+  getRotationPoolStatus: (AppHooks as any).GetRotationPoolStatus as () => Promise<{
+    enabled: boolean;
+    member_count: number;
+    interval_min: number;
+    quota_refresh_min: number;
+    next_switch_at?: string;
+    last_switched_to?: string;
+    last_switched_at?: string;
+    last_quota_refresh_at?: string;
+    last_error?: string;
+    total_switches: number;
+    total_quota_refreshes: number;
+    paused_by_pin: boolean;
+  }>,
+  rotationPoolSwitchNow: (AppHooks as any).RotationPoolSwitchNow as () => Promise<string>,
+  rotationPoolRefreshQuotasNow: (AppHooks as any).RotationPoolRefreshQuotasNow as () => Promise<void>,
+
+  // 配置导出/导入（多设备迁移 + 备份）
+  exportSettings: (AppHooks as any).ExportSettings as () => Promise<string>,
+  importSettings: (AppHooks as any).ImportSettings as (jsonText: string) => Promise<void>,
+
   // Clash IP 轮换
   testClashController: (AppHooks as any).TestClashController,
   listClashGroupNodes: (AppHooks as any).ListClashGroupNodes,

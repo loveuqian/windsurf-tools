@@ -111,6 +111,10 @@ func (a *App) SwitchMitmToNext() (string, error) {
 }
 
 // SwitchMitmToAccount 手动切到指定账号对应的 MITM API Key。
+//
+// 副作用：成功后自动 setManualPin(id) 锁定该账号，所有自动切换通道暂停。
+// 这是用户「手动切到 X 就是想用 X」的明确意图表达，避免随后被 auto-rotate
+// 又换走。用户需要恢复自动行为时点 Header 的「解锁」按钮即可。
 func (a *App) SwitchMitmToAccount(id string) (string, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -124,7 +128,11 @@ func (a *App) SwitchMitmToAccount(id string) (string, error) {
 	if apiKey == "" {
 		return "", fmt.Errorf("该账号没有 API Key，无法用于 MITM 手动切号")
 	}
-	return a.switchMitmAccountAndSyncLocalSession(acc)
+	res, err := a.switchMitmAccountAndSyncLocalSession(acc)
+	if err == nil {
+		a.setManualPin(id)
+	}
+	return res, err
 }
 
 // GetMitmProxyStatus returns the current proxy status.

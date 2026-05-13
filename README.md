@@ -1,6 +1,6 @@
 # Windsurf Tools 🏄‍♂️
 
-[![Version](https://img.shields.io/badge/Version-v1.2.0-success)](https://github.com/seven7763/windsurf-tools/releases)
+[![Version](https://img.shields.io/badge/Version-v1.3.0-success)](https://github.com/seven7763/windsurf-tools/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue)](#运行环境--prerequisites)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Built with Wails](https://img.shields.io/badge/Built%20with-Wails%20v2-red)](https://wails.io/)
@@ -135,6 +135,28 @@ wails build
 ---
 
 ## 🔧 最近修复 | Recent Fixes
+
+### v1.3.0 (2026-05-14)
+
+**新功能 | Features**
+
+- **手动锁定 (Manual Pin)** — 手动 `SwitchMitmToAccount` 成功后**自动锁定**当前账号，3 个自动切换通道（`onKeyExhausted` 回调 / 热轮询 / 定期同步）全部 skip + 日志。用户 100% 控制激活账号，避免「明明切到 user-A 转眼又被自动换走」。Header / Account 卡片 / Settings 三处都有 🔒 徽章 + 一键解锁按钮。热轮询时 pin 不阻断额度刷新（仍刷数据但不切号），保证 UI 数据不停
+- **轮换池 (Rotation Pool)** — 选 N 个账号进池，**定时切 + 额度耗尽双触发**只在池内来回切，池外账号完全不参与自动轮换。池内账号 1 分钟（可调 [1,10]）刷一次额度让 UI 实时显示。Settings 加完整 UI：开关 / 间隔输入 / 多选账号 / 状态面板（成员数 / 切换次数 / 上次切到 / Pin 暂停指示）。`intersectByID` 把 candidates 收窄到池成员
+- **桌面通知** — Pin 解除 / 额度耗尽切号失败 / Clash 错误 等关键事件弹系统通知中心，60s 内同类去重。跨平台原生命令：macOS `osascript` / Windows PowerShell BalloonTip / Linux `notify-send`。Settings 里可一键关闭
+- **配置导出 / 导入** — 跨设备迁移 / 备份。**自动剥离敏感字段**（Clash secret / Relay secret / Pin / 池成员 / Jailbreak 自定义文本）；导入时也保留当前敏感字段不被覆盖。前端走浏览器原生 download / input[type=file]，比 SaveDialog 更稳
+- **Account 卡片人性化** — 4 个新徽章 / 按钮：🔒 已锁定 + 解锁按钮、🔁 池内 + 加入/移出按钮、复制 sk-ws-key 按钮（一键给其它工具用）
+- **Header 全局可视性** — 顶部右上角 🔒 锁定徽章 + 解锁按钮（任何 view 都能看到 + 操作）、📋 复制当前活跃 API Key 按钮
+
+**Bug 修复 | Bugfixes**
+
+- `app_quota.go` 热轮询 + 定期同步 + `onKeyExhausted` 三处自动切都加 ManualPin guard，防 pin 被无视
+- `rotateMitmToNextAvailable` 在 candidates 阶段和 freshCandidates 阶段都用 `intersectByID(pool)` 收窄，避免预热后池外账号又混进来
+
+**测试 | Tests**
+
+- `app_pin_test.go`: setManualPin 持久化 / idempotent / 覆盖 / 拒空 ID / UnpinManualAccount 幂等 / GetManualPinStatus 富化 email+nickname (8 个测试)
+- `app_rotation_pool_test.go`: dedupNonEmpty / stringSliceEqual / rotationPoolMemberUsable / pickNextRotationPoolMember 环绕/skip 不可用/全不可用/池外 currentID 等 / intersectByID (8 个测试)
+- 全套 16 + 19 (v1.2) = 35 新测试全过，无回归
 
 ### v1.2.0 (2026-05-14)
 

@@ -9,6 +9,7 @@ import {
   watch,
 } from "vue";
 import { useSettingsStore } from "../stores/useSettingsStore";
+import { useAccountStore } from "../stores/useAccountStore";
 import IToggle from "../components/ios/IToggle.vue";
 import {
   clampHotPollSeconds,
@@ -39,6 +40,7 @@ import { confirmDialog, showToast } from "../utils/toast";
 import { APIInfo } from "../api/wails";
 
 const settingsStore = useSettingsStore();
+const accountStore = useAccountStore();
 let autoSaveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let saveStateResetTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -84,6 +86,10 @@ onMounted(() => {
   // 破限 v1.2.0：拉一次 preset 列表 + runtime 状态。手动刷新策略，不轮询。
   void fetchJailbreakPresets();
   void fetchJailbreakRuntime();
+  // v1.3.0：pin/pool 状态 + 账号列表（轮换池成员选择需要）
+  void fetchPinStatus();
+  void fetchPoolStatus();
+  void accountStore.ensureAccountsLoaded();
 });
 
 watch(
@@ -396,6 +402,163 @@ const riskBadgeClass = (risk: string) => {
 
 const riskBadgeLabel = (risk: string) =>
   ({ low: "低风险", medium: "中风险", high: "高风险" })[risk] || "未知";
+
+// ── v1.3.0 手动锁定 + 轮换池 ──
+type ManualPinStatus = {
+  enabled: boolean;
+  account_id?: string;
+  email?: string;
+  nickname?: string;
+};
+type RotationPoolStatus = {
+  enabled: boolean;
+  member_count: number;
+  interval_min: number;
+  quota_refresh_min: number;
+  next_switch_at?: string;
+  last_switched_to?: string;
+  last_switched_at?: string;
+  last_quota_refresh_at?: string;
+  last_error?: string;
+  total_switches: number;
+  total_quota_refreshes: number;
+  paused_by_pin: boolean;
+};
+
+const pinStatus = ref<ManualPinStatus | null>(null);
+const poolStatus = ref<RotationPoolStatus | null>(null);
+const poolStatusLoading = ref(false);
+const poolSearchQuery = ref("");
+
+const fetchPinStatus = async () => {
+  try {
+    pinStatus.value = await APIInfo.getManualPinStatus();
+  } catch (e) {
+    console.warn("getManualPinStatus failed", e);
+  }
+};
+
+const fetchPoolStatus = async () => {
+  poolStatusLoading.value = true;
+  try {
+    poolStatus.value = await APIInfo.getRotationPoolStatus();
+  } catch (e) {
+    console.warn("getRotationPoolStatus failed", e);
+  } finally {
+    poolStatusLoading.value = false;
+  }
+};
+
+const handleUnpinManual = async () => {
+  try {
+    await APIInfo.unpinManualAccount();
+    await fetchPinStatus();
+    await settingsStore.fetchSettings(true);
+    showToast("已解除锁定，自动切换已恢复", "success");
+  } catch (e) {
+    showToast(`解锁失败: ${String(e)}`, "error");
+  }
+};
+
+const handlePoolSwitchNow = async () => {
+  try {
+    await APIInfo.rotationPoolSwitchNow();
+    await fetchPoolStatus();
+    showToast("已触发立即切换", "success");
+  } catch (e) {
+    showToast(`切换失败: ${String(e)}`, "error");
+  }
+};
+
+// ── v1.3.0 配置导出 / 导入 ──
+// 用浏览器原生 download / input file。比 Wails SaveDialog 更稳，跨平台一致。
+const handleExportSettings = async () => {
+  try {
+    const json = await APIInfo.exportSettings();
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    a.download = `windsurf-tools-settings-${ts}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast("配置已导出（敏感字段已剥离）", "success");
+  } catch (e) {
+    showToast(`导出失败: ${String(e)}`, "error");
+  }
+};
+
+const handleImportSettings = async () => {
+  const ok = await confirmDialog(
+    "导入会覆盖当前设置（保留 Clash secret / Relay secret / Pin / 池成员）。确认继续？",
+    { confirmText: "导入", cancelText: "取消" },
+  );
+  if (!ok) return;
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".json,application/json";
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      await APIInfo.importSettings(text);
+      await settingsStore.fetchSettings(true);
+      showToast(`已从 ${file.name} 导入配置`, "success");
+    } catch (e) {
+      showToast(`导入失败: ${String(e)}`, "error");
+    }
+  };
+  input.click();
+};
+
+const handlePoolRefreshQuotasNow = async () => {
+  try {
+    await APIInfo.rotationPoolRefreshQuotasNow();
+    await accountStore.fetchAccounts(true);
+    showToast("池内账号额度已开始刷新", "success");
+    // 给后台 2 秒刷完再 fetch 状态
+    setTimeout(fetchPoolStatus, 2000);
+  } catch (e) {
+    showToast(`刷新失败: ${String(e)}`, "error");
+  }
+};
+
+const togglePoolMember = (id: string) => {
+  const list = [...(local.rotation_pool_account_ids || [])];
+  const idx = list.indexOf(id);
+  if (idx >= 0) {
+    list.splice(idx, 1);
+  } else {
+    list.push(id);
+  }
+  local.rotation_pool_account_ids = list;
+};
+
+const isPoolMember = (id: string) =>
+  (local.rotation_pool_account_ids || []).includes(id);
+
+const poolFilteredAccounts = computed(() => {
+  const q = poolSearchQuery.value.trim().toLowerCase();
+  const all = accountStore.accounts;
+  if (!q) return all;
+  return all.filter(
+    (a) =>
+      (a.email || "").toLowerCase().includes(q) ||
+      (a.nickname || "").toLowerCase().includes(q) ||
+      (a.plan_name || "").toLowerCase().includes(q),
+  );
+});
+
+const poolMemberEmails = computed(() => {
+  const ids = new Set(local.rotation_pool_account_ids || []);
+  return accountStore.accounts
+    .filter((a) => ids.has(a.id))
+    .map((a) => a.email || a.id.slice(0, 8));
+});
 
 // ── 一键智能启用 Clash IP 轮换 ──
 // 后端会：探活 → 自动挑 selector 组 → 写设置 → 启 rotator → 立即切一次
@@ -1308,6 +1471,213 @@ onUnmounted(() => {
               </div>
             </div>
 
+            <!-- ★ v1.3.0 手动锁定状态条 -->
+            <div
+              v-if="pinStatus?.enabled"
+              class="p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-amber-500/15 bg-amber-500/[0.06]"
+            >
+              <div class="flex-1 pr-4">
+                <div class="text-[15px] font-bold text-gray-900 dark:text-gray-100 mb-1 flex items-center gap-2">
+                  <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                  已锁定到 {{ pinStatus.nickname || pinStatus.email || pinStatus.account_id?.slice(0, 8) }}
+                </div>
+                <div class="text-[13px] text-gray-500 dark:text-gray-400">
+                  手动切号后已自动锁定，3 个自动切换通道（额度耗尽 / 限速 / 热轮询）全部暂停。
+                  点击「解锁」恢复自动行为。
+                </div>
+              </div>
+              <button
+                type="button"
+                class="no-drag-region shrink-0 px-4 py-2 rounded-full font-bold text-[13px] bg-amber-500 text-white hover:bg-amber-600 transition-colors ios-btn"
+                @click="handleUnpinManual"
+              >
+                解锁
+              </button>
+            </div>
+
+            <!-- ★ v1.3.0 轮换池 -->
+            <div
+              class="p-5 sm:p-6 flex flex-col gap-4 border-b border-black/[0.04] dark:border-white/[0.04] bg-violet-500/[0.03]"
+            >
+              <div class="flex items-center justify-between gap-4">
+                <div class="flex-1 pr-4">
+                  <div class="text-[15px] font-bold text-gray-900 dark:text-gray-100 mb-1 flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 rounded-full bg-violet-500"></span>
+                    轮换池 (Rotation Pool)
+                  </div>
+                  <div class="text-[13px] text-gray-500 dark:text-gray-400">
+                    选 2 个以上账号进池，定时切 + 额度耗尽双触发只在池内来回切。
+                    <b>池外账号完全不参与自动轮换</b>，池内账号高频刷额度让 UI 实时显示。
+                  </div>
+                </div>
+                <IToggle v-model="local.rotation_pool_enabled" />
+              </div>
+
+              <div v-if="local.rotation_pool_enabled" class="flex flex-col gap-3">
+                <!-- 间隔 + 额度刷新 -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div class="flex flex-col gap-1">
+                    <label class="text-[12px] font-bold text-gray-600 dark:text-gray-400">
+                      定时切间隔（分钟，1-60）
+                    </label>
+                    <input
+                      v-model.number="local.rotation_pool_interval_min"
+                      type="number"
+                      min="1"
+                      max="60"
+                      class="no-drag-region w-full px-3 py-2 rounded-lg text-[14px] font-bold bg-white dark:bg-gray-900 border border-black/[0.08] dark:border-white/[0.08] focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+                    />
+                  </div>
+                  <div class="flex flex-col gap-1">
+                    <label class="text-[12px] font-bold text-gray-600 dark:text-gray-400">
+                      池内额度刷新间隔（分钟，1-10）
+                    </label>
+                    <input
+                      v-model.number="local.rotation_pool_quota_refresh_min"
+                      type="number"
+                      min="1"
+                      max="10"
+                      class="no-drag-region w-full px-3 py-2 rounded-lg text-[14px] font-bold bg-white dark:bg-gray-900 border border-black/[0.08] dark:border-white/[0.08] focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+                    />
+                  </div>
+                </div>
+
+                <!-- 当前池成员 -->
+                <div v-if="poolMemberEmails.length > 0" class="flex flex-wrap gap-1.5">
+                  <span class="text-[12px] font-bold text-gray-600 dark:text-gray-400 self-center">
+                    池内 {{ poolMemberEmails.length }} 个:
+                  </span>
+                  <span
+                    v-for="email in poolMemberEmails"
+                    :key="email"
+                    class="rounded-full bg-violet-500/15 border border-violet-500/25 px-2.5 py-1 text-[11px] font-bold text-violet-700 dark:text-violet-300"
+                  >
+                    {{ email }}
+                  </span>
+                </div>
+                <div v-else class="text-[12px] text-amber-600 dark:text-amber-400">
+                  ⚠ 还没选任何成员。下面勾选 2 个以上账号进池。
+                </div>
+
+                <!-- 账号选择列表 -->
+                <div class="flex flex-col gap-2">
+                  <div class="flex items-center justify-between gap-2">
+                    <label class="text-[12px] font-bold text-gray-600 dark:text-gray-400">
+                      池成员选择（{{ accountStore.accounts.length }} 个账号可选）
+                    </label>
+                    <input
+                      v-model="poolSearchQuery"
+                      type="text"
+                      placeholder="搜邮箱/昵称/plan…"
+                      class="no-drag-region flex-1 max-w-[200px] px-2 py-1 rounded text-[12px] bg-white dark:bg-gray-900 border border-black/[0.08] dark:border-white/[0.08] focus:outline-none focus:ring-1 focus:ring-violet-500/40"
+                    />
+                  </div>
+                  <div
+                    class="max-h-[240px] overflow-y-auto rounded-lg border border-black/[0.06] dark:border-white/[0.08] bg-white/60 dark:bg-white/[0.03]"
+                  >
+                    <div v-if="poolFilteredAccounts.length === 0" class="p-3 text-center text-[12px] text-gray-400">
+                      {{ accountStore.accounts.length === 0 ? "号池为空，先去 Accounts 导入账号" : "无匹配账号" }}
+                    </div>
+                    <label
+                      v-for="acc in poolFilteredAccounts"
+                      :key="acc.id"
+                      class="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-violet-500/[0.06] border-b border-black/[0.03] dark:border-white/[0.04] last:border-b-0"
+                    >
+                      <input
+                        type="checkbox"
+                        :checked="isPoolMember(acc.id)"
+                        @change="togglePoolMember(acc.id)"
+                        class="no-drag-region accent-violet-500"
+                      />
+                      <span class="font-mono text-[12px] text-gray-700 dark:text-gray-300 flex-1 truncate">
+                        {{ acc.email || `(${acc.id.slice(0, 8)})` }}
+                      </span>
+                      <span
+                        class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-100 dark:bg-white/[0.08] text-gray-600 dark:text-gray-400"
+                      >
+                        {{ acc.plan_name || "unknown" }}
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- 状态面板 -->
+                <div
+                  v-if="poolStatus"
+                  class="rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/60 dark:bg-white/[0.03] p-3 flex flex-col gap-2"
+                >
+                  <div class="flex items-center justify-between">
+                    <span class="text-[12px] font-bold text-gray-700 dark:text-gray-300">
+                      运行时状态
+                      <span
+                        v-if="poolStatus.paused_by_pin"
+                        class="ml-2 px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[10px] font-bold"
+                      >
+                        Pin 暂停中
+                      </span>
+                    </span>
+                    <div class="flex gap-2">
+                      <button
+                        type="button"
+                        class="text-[11px] font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                        :disabled="poolStatusLoading"
+                        @click="fetchPoolStatus"
+                      >
+                        {{ poolStatusLoading ? "刷新中…" : "刷新" }}
+                      </button>
+                      <button
+                        type="button"
+                        class="text-[11px] font-bold text-violet-600 hover:underline dark:text-violet-300"
+                        @click="handlePoolSwitchNow"
+                      >
+                        立即切下一个
+                      </button>
+                      <button
+                        type="button"
+                        class="text-[11px] font-bold text-emerald-600 hover:underline dark:text-emerald-300"
+                        @click="handlePoolRefreshQuotasNow"
+                      >
+                        立即刷池内额度
+                      </button>
+                    </div>
+                  </div>
+                  <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11.5px]">
+                    <div class="rounded bg-black/[0.04] dark:bg-white/[0.05] px-2 py-1.5">
+                      <div class="text-gray-500 dark:text-gray-400">成员数</div>
+                      <div class="font-bold text-gray-800 dark:text-gray-100">
+                        {{ poolStatus.member_count }}
+                      </div>
+                    </div>
+                    <div class="rounded bg-black/[0.04] dark:bg-white/[0.05] px-2 py-1.5">
+                      <div class="text-gray-500 dark:text-gray-400">已切换</div>
+                      <div class="font-bold text-gray-800 dark:text-gray-100">
+                        {{ poolStatus.total_switches }} 次
+                      </div>
+                    </div>
+                    <div class="rounded bg-black/[0.04] dark:bg-white/[0.05] px-2 py-1.5">
+                      <div class="text-gray-500 dark:text-gray-400">额度已刷</div>
+                      <div class="font-bold text-gray-800 dark:text-gray-100">
+                        {{ poolStatus.total_quota_refreshes }} 轮
+                      </div>
+                    </div>
+                    <div class="rounded bg-black/[0.04] dark:bg-white/[0.05] px-2 py-1.5 truncate" :title="poolStatus.last_switched_to">
+                      <div class="text-gray-500 dark:text-gray-400">上次切到</div>
+                      <div class="font-bold text-gray-800 dark:text-gray-100 truncate">
+                        {{ poolStatus.last_switched_to || "—" }}
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    v-if="poolStatus.last_error"
+                    class="rounded border border-rose-500/25 bg-rose-500/[0.08] px-2 py-1 text-[11px] text-rose-700 dark:text-rose-300 truncate"
+                    :title="poolStatus.last_error"
+                  >
+                    最近错误: {{ poolStatus.last_error }}
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div
               class="p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-black/[0.04] dark:border-white/[0.04]"
             >
@@ -1377,6 +1747,53 @@ onUnmounted(() => {
                 </div>
               </div>
               <IToggle v-model="local.debug_log" />
+            </div>
+
+            <!-- ★ v1.3.0 桌面通知 -->
+            <div
+              class="p-5 sm:p-6 flex items-center justify-between gap-4 border-b border-black/[0.04] dark:border-white/[0.04]"
+            >
+              <div class="flex-1 pr-4">
+                <div class="text-[15px] font-bold text-gray-900 dark:text-gray-100 mb-1">
+                  桌面通知
+                </div>
+                <div class="text-[13px] text-gray-500 dark:text-gray-400">
+                  关键事件弹系统通知中心：账号锁定解除 / 额度耗尽且切号失败 / Clash 异常。
+                  60 秒内同类事件去重。
+                </div>
+              </div>
+              <IToggle v-model="local.desktop_notifications" />
+            </div>
+
+            <!-- ★ v1.3.0 配置导出 / 导入 -->
+            <div class="p-5 sm:p-6 flex flex-col gap-3">
+              <div class="flex items-center justify-between gap-4 flex-wrap">
+                <div class="flex-1 pr-4 min-w-[200px]">
+                  <div class="text-[15px] font-bold text-gray-900 dark:text-gray-100 mb-1">
+                    配置导出 / 导入
+                  </div>
+                  <div class="text-[13px] text-gray-500 dark:text-gray-400">
+                    导出当前设置为 JSON 文件备份 / 跨设备迁移。
+                    <b>会自动剥离敏感字段</b>（Clash secret / Relay secret / Pin / 池成员），导入时也会保留这些。
+                  </div>
+                </div>
+                <div class="flex flex-wrap gap-2 shrink-0">
+                  <button
+                    type="button"
+                    class="no-drag-region px-3 py-2 rounded-lg text-[13px] font-bold bg-ios-blue/10 text-ios-blue hover:bg-ios-blue/20 transition-colors"
+                    @click="handleExportSettings"
+                  >
+                    导出 JSON
+                  </button>
+                  <button
+                    type="button"
+                    class="no-drag-region px-3 py-2 rounded-lg text-[13px] font-bold bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 transition-colors"
+                    @click="handleImportSettings"
+                  >
+                    从文件导入
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </section>

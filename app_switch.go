@@ -128,6 +128,27 @@ func quotaDataIsStale(acc *models.Account) bool {
 	return time.Since(t) > 4*time.Hour
 }
 
+// intersectByID 保留 source 中 ID 在 idsAllowed 里的项，顺序按 source 原顺序。
+// 用于把 candidates 收窄到 RotationPool 成员。
+func intersectByID(source []models.Account, idsAllowed []string) []models.Account {
+	if len(idsAllowed) == 0 {
+		return nil
+	}
+	allowed := make(map[string]bool, len(idsAllowed))
+	for _, id := range idsAllowed {
+		if id != "" {
+			allowed[id] = true
+		}
+	}
+	out := make([]models.Account, 0, len(source))
+	for _, a := range source {
+		if allowed[a.ID] {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 func orderedMitmCandidates(accounts []models.Account, currentID string, planFilter string) []models.Account {
 	var fresh, stale []models.Account
 	for _, acc := range accounts {
@@ -230,6 +251,13 @@ func (a *App) prepareAccountForUsage(acc models.Account) (models.Account, error)
 
 func (a *App) rotateMitmToNextAvailable(currentID string, planFilter string) (models.Account, error) {
 	candidates := orderedMitmCandidates(a.store.GetAllAccounts(), currentID, planFilter)
+	// ★ Rotation Pool 启用时把候选收窄到池内成员。池外账号完全不参与
+	// 自动轮换 —— 这是用户「选这几个号来回切」的明确意图。
+	settings := a.store.GetSettings()
+	if settings.RotationPoolEnabled && len(settings.RotationPoolAccountIDs) > 0 {
+		candidates = intersectByID(candidates, settings.RotationPoolAccountIDs)
+		utils.DLog("[切号] rotateMitm: RotationPool 启用，候选收窄到池内 %d 个", len(candidates))
+	}
 	utils.DLog("[切号] rotateMitm: currentID=%s filter=%s 候选=%d", currentID[:min(8, len(currentID))], planFilter, len(candidates))
 	if len(candidates) == 0 {
 		return models.Account{}, fmt.Errorf("无可用 MITM 候选账号")
@@ -240,6 +268,9 @@ func (a *App) rotateMitmToNextAvailable(currentID string, planFilter string) (mo
 
 	// 预热后重读 store，仅保留仍有额度的
 	freshCandidates := orderedMitmCandidates(a.store.GetAllAccounts(), currentID, planFilter)
+	if settings.RotationPoolEnabled && len(settings.RotationPoolAccountIDs) > 0 {
+		freshCandidates = intersectByID(freshCandidates, settings.RotationPoolAccountIDs)
+	}
 	utils.DLog("[切号] rotateMitm: 预热后候选=%d", len(freshCandidates))
 	if len(freshCandidates) == 0 {
 		return models.Account{}, fmt.Errorf("预热后无可用 MITM 候选账号（候选均已耗尽）")

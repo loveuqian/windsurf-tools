@@ -58,6 +58,10 @@ export function ExportAccountsByGroup(arg1) {
   return window['go']['main']['App']['ExportAccountsByGroup'](arg1);
 }
 
+export function ExportSettings() {
+  return window['go']['main']['App']['ExportSettings']();
+}
+
 export function GetAccount(arg1) {
   return window['go']['main']['App']['GetAccount'](arg1);
 }
@@ -80,6 +84,10 @@ export function GetJailbreakDefaultOverride() {
 
 export function GetJailbreakRuntime() {
   return window['go']['main']['App']['GetJailbreakRuntime']();
+}
+
+export function GetManualPinStatus() {
+  return window['go']['main']['App']['GetManualPinStatus']();
 }
 
 export function GetMitmCAPath() {
@@ -112,6 +120,10 @@ export function GetPerformanceTips() {
 
 export function GetProtoDumpDir() {
   return window['go']['main']['App']['GetProtoDumpDir']();
+}
+
+export function GetRotationPoolStatus() {
+  return window['go']['main']['App']['GetRotationPoolStatus']();
 }
 
 export function GetSettings() {
@@ -154,6 +166,10 @@ export function ImportByRefreshToken(arg1) {
   return window['go']['main']['App']['ImportByRefreshToken'](arg1);
 }
 
+export function ImportSettings(arg1) {
+  return window['go']['main']['App']['ImportSettings'](arg1);
+}
+
 export function ListClashGroupNodes(arg1, arg2, arg3) {
   return window['go']['main']['App']['ListClashGroupNodes'](arg1, arg2, arg3);
 }
@@ -184,6 +200,14 @@ export function ResetJailbreakStats() {
 
 export function RevealJailbreakOverrideFolder() {
   return window['go']['main']['App']['RevealJailbreakOverrideFolder']();
+}
+
+export function RotationPoolRefreshQuotasNow() {
+  return window['go']['main']['App']['RotationPoolRefreshQuotasNow']();
+}
+
+export function RotationPoolSwitchNow() {
+  return window['go']['main']['App']['RotationPoolSwitchNow']();
 }
 
 export function SaveJailbreakOverrideFile(arg1) {
@@ -264,6 +288,10 @@ export function UninstallMitmCA() {
 
 export function UninstallMitmHosts() {
   return window['go']['main']['App']['UninstallMitmHosts']();
+}
+
+export function UnpinManualAccount() {
+  return window['go']['main']['App']['UnpinManualAccount']();
 }
 
 export function UpdateSettings(arg1) {

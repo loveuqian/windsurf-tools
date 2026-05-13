@@ -178,6 +178,24 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class ManualPinStatus {
+	    enabled: boolean;
+	    account_id?: string;
+	    email?: string;
+	    nickname?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ManualPinStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.account_id = source["account_id"];
+	        this.email = source["email"];
+	        this.nickname = source["nickname"];
+	    }
+	}
 	export class PerformanceTip {
 	    id: string;
 	    title: string;
@@ -218,6 +236,40 @@ export namespace main {
 	        this.skipped = source["skipped"];
 	        this.error = source["error"];
 	        this.hint = source["hint"];
+	    }
+	}
+	export class RotationPoolStatus {
+	    enabled: boolean;
+	    member_count: number;
+	    interval_min: number;
+	    quota_refresh_min: number;
+	    next_switch_at?: string;
+	    last_switched_to?: string;
+	    last_switched_at?: string;
+	    last_quota_refresh_at?: string;
+	    last_error?: string;
+	    total_switches: number;
+	    total_quota_refreshes: number;
+	    paused_by_pin: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new RotationPoolStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.member_count = source["member_count"];
+	        this.interval_min = source["interval_min"];
+	        this.quota_refresh_min = source["quota_refresh_min"];
+	        this.next_switch_at = source["next_switch_at"];
+	        this.last_switched_to = source["last_switched_to"];
+	        this.last_switched_at = source["last_switched_at"];
+	        this.last_quota_refresh_at = source["last_quota_refresh_at"];
+	        this.last_error = source["last_error"];
+	        this.total_switches = source["total_switches"];
+	        this.total_quota_refreshes = source["total_quota_refreshes"];
+	        this.paused_by_pin = source["paused_by_pin"];
 	    }
 	}
 	export class TokenItem {
@@ -335,8 +387,15 @@ export namespace models {
 	    quota_custom_interval_minutes: number;
 	    auto_switch_plan_filter: string;
 	    auto_switch_on_quota_exhausted: boolean;
+	    manual_pin_enabled: boolean;
+	    manual_pin_account_id: string;
+	    rotation_pool_enabled: boolean;
+	    rotation_pool_account_ids: string[];
+	    rotation_pool_interval_min: number;
+	    rotation_pool_quota_refresh_min: number;
 	    quota_hot_poll_seconds: number;
 	    minimize_to_tray: boolean;
+	    desktop_notifications: boolean;
 	    silent_start: boolean;
 	    mitm_debug_dump: boolean;
 	    mitm_full_capture: boolean;
@@ -381,8 +440,15 @@ export namespace models {
 	        this.quota_custom_interval_minutes = source["quota_custom_interval_minutes"];
 	        this.auto_switch_plan_filter = source["auto_switch_plan_filter"];
 	        this.auto_switch_on_quota_exhausted = source["auto_switch_on_quota_exhausted"];
+	        this.manual_pin_enabled = source["manual_pin_enabled"];
+	        this.manual_pin_account_id = source["manual_pin_account_id"];
+	        this.rotation_pool_enabled = source["rotation_pool_enabled"];
+	        this.rotation_pool_account_ids = source["rotation_pool_account_ids"];
+	        this.rotation_pool_interval_min = source["rotation_pool_interval_min"];
+	        this.rotation_pool_quota_refresh_min = source["rotation_pool_quota_refresh_min"];
 	        this.quota_hot_poll_seconds = source["quota_hot_poll_seconds"];
 	        this.minimize_to_tray = source["minimize_to_tray"];
+	        this.desktop_notifications = source["desktop_notifications"];
 	        this.silent_start = source["silent_start"];
 	        this.mitm_debug_dump = source["mitm_debug_dump"];
 	        this.mitm_full_capture = source["mitm_full_capture"];

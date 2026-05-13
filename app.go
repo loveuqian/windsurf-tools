@@ -20,6 +20,7 @@ type App struct {
 	mitmProxy              *services.MitmProxy
 	openaiRelay            *services.OpenAIRelay
 	clashRotator           *services.ClashRotator
+	rotationPool           *rotationPoolState
 	usageTracker           *services.UsageTracker
 	cancelAutoRefresh      context.CancelFunc
 	cancelAutoQuotaRefresh context.CancelFunc
@@ -68,10 +69,19 @@ func (a *App) initBackend() error {
 		_ = a.RefreshAccountQuota(accID)
 		// ★ 立即触发切号（之前只刷额度不切号，导致 IDE 继续用耗尽账号）
 		s := a.store.GetSettings()
+		// Pin 优先：手动锁定时跳过所有自动切（用户 100% 控制）
+		if s.ManualPinEnabled {
+			utils.DLog("[回调] onKeyExhausted: ManualPin 生效 (pin=%s)，跳过自动切", s.ManualPinAccountID[:min(8, len(s.ManualPinAccountID))])
+			return
+		}
 		if s.AutoSwitchOnQuotaExhausted {
 			utils.DLog("[回调] onKeyExhausted: AutoSwitch=true → 立即MITM轮换")
 			if next, err := a.rotateMitmToNextAvailable(accID, s.AutoSwitchPlanFilter); err != nil {
 				utils.DLog("[回调] onKeyExhausted: MITM轮换失败: %v", err)
+				// 关键事件：额度耗尽 + 没切到下一个 → 用户需要立刻知道
+				a.notify(NotifyKindError, "rotate-failed",
+					"额度耗尽但无可用账号",
+					"当前账号 quota 用尽，自动切换失败: "+err.Error())
 			} else {
 				utils.DLog("[回调] onKeyExhausted: MITM轮换成功 → %s", next.Email)
 			}
@@ -110,6 +120,7 @@ func (a *App) initBackend() error {
 	}
 	a.restartQuotaHotPollIfNeeded()
 	a.applyClashRotatorSettings()
+	a.applyRotationPoolSettings()
 	return nil
 }
 
@@ -161,5 +172,6 @@ func (a *App) shutdown(ctx context.Context) {
 		a.openaiRelay.Stop()
 	}
 	a.stopClashRotator()
+	a.stopRotationPool()
 	a.cleanupMitmEnvironment()
 }

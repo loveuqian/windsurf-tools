@@ -42,8 +42,15 @@ export function createDefaultSettings(): models.Settings {
     quota_custom_interval_minutes: 360,
     auto_switch_plan_filter: 'all',
     auto_switch_on_quota_exhausted: true,
+    manual_pin_enabled: false,
+    manual_pin_account_id: '',
+    rotation_pool_enabled: false,
+    rotation_pool_account_ids: [],
+    rotation_pool_interval_min: 5,
+    rotation_pool_quota_refresh_min: 1,
     quota_hot_poll_seconds: 12,
     minimize_to_tray: false,
+    desktop_notifications: true,
     silent_start: false,
     openai_relay_enabled: false,
     openai_relay_port: 8787,
@@ -86,10 +93,25 @@ export function normalizeSettings(raw: unknown): models.Settings {
     auto_switch_plan_filter: normalizeSwitchPlanFilter(String(s.auto_switch_plan_filter ?? 'all')),
     auto_switch_on_quota_exhausted:
       'auto_switch_on_quota_exhausted' in s ? Boolean(s.auto_switch_on_quota_exhausted) : true,
+    manual_pin_enabled: 'manual_pin_enabled' in s ? Boolean(s.manual_pin_enabled) : false,
+    manual_pin_account_id: String(s.manual_pin_account_id ?? ''),
+    rotation_pool_enabled:
+      'rotation_pool_enabled' in s ? Boolean(s.rotation_pool_enabled) : false,
+    rotation_pool_account_ids: Array.isArray(s.rotation_pool_account_ids)
+      ? (s.rotation_pool_account_ids as string[]).filter((x) => typeof x === 'string' && x.trim() !== '')
+      : [],
+    rotation_pool_interval_min: clampRotationPoolInterval(
+      Number(s.rotation_pool_interval_min ?? 5),
+    ),
+    rotation_pool_quota_refresh_min: clampRotationPoolQuotaRefresh(
+      Number(s.rotation_pool_quota_refresh_min ?? 1),
+    ),
     quota_hot_poll_seconds: clampHotPollSeconds(
       'quota_hot_poll_seconds' in s ? Number(s.quota_hot_poll_seconds) : 12,
     ),
     minimize_to_tray: Boolean(s.minimize_to_tray),
+    desktop_notifications:
+      'desktop_notifications' in s ? Boolean(s.desktop_notifications) : true,
     silent_start: 'silent_start' in s ? Boolean(s.silent_start) : base.silent_start,
     openai_relay_enabled: 'openai_relay_enabled' in s ? Boolean(s.openai_relay_enabled) : base.openai_relay_enabled,
     openai_relay_port: Math.max(1, Math.min(65535, Number(s.openai_relay_port) || 8787)),
@@ -180,6 +202,22 @@ export function clampClashInterval(min: number): number {
   return Math.min(60, Math.max(2, Math.round(min)))
 }
 
+/** RotationPool 定时切间隔（分钟），与后端钳制一致 [1,60] */
+export function clampRotationPoolInterval(min: number): number {
+  if (!Number.isFinite(min) || min <= 0) {
+    return 5
+  }
+  return Math.min(60, Math.max(1, Math.round(min)))
+}
+
+/** RotationPool 额度刷新间隔（分钟），与后端钳制一致 [1,10] */
+export function clampRotationPoolQuotaRefresh(min: number): number {
+  if (!Number.isFinite(min) || min <= 0) {
+    return 1
+  }
+  return Math.min(10, Math.max(1, Math.round(min)))
+}
+
 /** 与后端 JSON 字段一致，便于 reactive + v-model */
 export type SettingsForm = {
   concurrent_limit: number
@@ -191,10 +229,24 @@ export type SettingsForm = {
   auto_switch_plan_filter: string
   /** 额度用尽时自动切下一席（需开启定期同步额度） */
   auto_switch_on_quota_exhausted: boolean
+  /** 手动切号后自动锁定，所有 auto-switch 通道暂停 */
+  manual_pin_enabled: boolean
+  /** 锁定到的账号 ID（UUID） */
+  manual_pin_account_id: string
+  /** 轮换池总开关 */
+  rotation_pool_enabled: boolean
+  /** 池内账号 ID 列表（UUID） */
+  rotation_pool_account_ids: string[]
+  /** 定时切间隔（分钟），[1,60]，默认 5 */
+  rotation_pool_interval_min: number
+  /** 池内账号额度刷新间隔（分钟），[1,10]，默认 1 */
+  rotation_pool_quota_refresh_min: number
   /** 当前活跃席位快查间隔（秒），用尽轮换依赖此轮询 */
   quota_hot_poll_seconds: number
   /** 关闭窗口时最小化到系统托盘 */
   minimize_to_tray: boolean
+  /** 关键事件弹桌面通知 (Pin 解除 / 额度耗尽 / Clash 错误) */
+  desktop_notifications: boolean
   /** 启动时不显示主窗口（托盘仍可打开） */
   silent_start: boolean
   /** OpenAI 兼容中转服务器 */
@@ -244,8 +296,17 @@ export function settingsToForm(s: models.Settings): SettingsForm {
     quota_custom_interval_minutes: clampQuotaMinutes(s.quota_custom_interval_minutes),
     auto_switch_plan_filter: normalizeSwitchPlanFilter(s.auto_switch_plan_filter),
     auto_switch_on_quota_exhausted: s.auto_switch_on_quota_exhausted !== false,
+    manual_pin_enabled: (s as any).manual_pin_enabled === true,
+    manual_pin_account_id: String((s as any).manual_pin_account_id ?? ''),
+    rotation_pool_enabled: (s as any).rotation_pool_enabled === true,
+    rotation_pool_account_ids: Array.isArray((s as any).rotation_pool_account_ids)
+      ? (s as any).rotation_pool_account_ids.filter((x: unknown) => typeof x === 'string' && (x as string).trim() !== '')
+      : [],
+    rotation_pool_interval_min: clampRotationPoolInterval(Number((s as any).rotation_pool_interval_min ?? 5)),
+    rotation_pool_quota_refresh_min: clampRotationPoolQuotaRefresh(Number((s as any).rotation_pool_quota_refresh_min ?? 1)),
     quota_hot_poll_seconds: clampHotPollSeconds(s.quota_hot_poll_seconds ?? 12),
     minimize_to_tray: s.minimize_to_tray === true,
+    desktop_notifications: (s as any).desktop_notifications !== false,
     silent_start: s.silent_start === true,
     openai_relay_enabled: s.openai_relay_enabled === true,
     openai_relay_port: Math.max(1, Number(s.openai_relay_port) || 8787),
@@ -284,8 +345,17 @@ export function formToSettings(form: SettingsForm): models.Settings {
     quota_custom_interval_minutes: clampQuotaMinutes(form.quota_custom_interval_minutes),
     auto_switch_plan_filter: normalizeSwitchPlanFilter(form.auto_switch_plan_filter),
     auto_switch_on_quota_exhausted: form.auto_switch_on_quota_exhausted,
+    manual_pin_enabled: form.manual_pin_enabled,
+    manual_pin_account_id: (form.manual_pin_account_id ?? '').trim(),
+    rotation_pool_enabled: form.rotation_pool_enabled,
+    rotation_pool_account_ids: Array.isArray(form.rotation_pool_account_ids)
+      ? form.rotation_pool_account_ids.filter((x) => typeof x === 'string' && x.trim() !== '')
+      : [],
+    rotation_pool_interval_min: clampRotationPoolInterval(form.rotation_pool_interval_min),
+    rotation_pool_quota_refresh_min: clampRotationPoolQuotaRefresh(form.rotation_pool_quota_refresh_min),
     quota_hot_poll_seconds: clampHotPollSeconds(form.quota_hot_poll_seconds),
     minimize_to_tray: form.minimize_to_tray,
+    desktop_notifications: form.desktop_notifications,
     silent_start: form.silent_start,
     openai_relay_enabled: form.openai_relay_enabled,
     openai_relay_port: Math.max(1, Math.min(65535, Math.round(form.openai_relay_port) || 8787)),

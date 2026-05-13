@@ -1,15 +1,74 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { Moon, Monitor, RadioTower, ShieldCheck, Sun } from 'lucide-vue-next'
+import { computed, onMounted } from 'vue'
+import { Copy, Lock, Moon, Monitor, RadioTower, ShieldCheck, Sun } from 'lucide-vue-next'
 import { useMitmStatusStore } from '../../stores/useMitmStatusStore'
+import { useSettingsStore } from '../../stores/useSettingsStore'
+import { useAccountStore } from '../../stores/useAccountStore'
 import { APP_VERSION } from '../../utils/appMeta'
 import { APP_PRODUCT_NAME, APP_PRODUCT_TAGLINE } from '../../utils/appMode'
 import { cycleTheme, themeLabel, themeMode } from '../../utils/theme'
+import { APIInfo } from '../../api/wails'
+import { showToast } from '../../utils/toast'
 
 const mitmStore = useMitmStatusStore()
+const settingsStore = useSettingsStore()
+const accountStore = useAccountStore()
+
+onMounted(() => {
+  // 让 Pin 徽章可见性跟随 settings 变化
+  void settingsStore.fetchSettings()
+  void accountStore.ensureAccountsLoaded()
+})
 
 const modeLabel = computed(() => 'Pure MITM')
 const activeKey = computed(() => mitmStore.status?.pool_status?.find((item) => item.is_current) ?? null)
+
+const isPinned = computed(() => settingsStore.settings?.manual_pin_enabled === true)
+const pinnedAccount = computed(() => {
+  const id = settingsStore.settings?.manual_pin_account_id
+  if (!id) return null
+  return accountStore.accounts.find((a) => a.id === id) ?? null
+})
+const pinnedLabel = computed(() => {
+  if (!isPinned.value) return ''
+  const acc = pinnedAccount.value
+  if (acc?.email) return acc.email
+  return settingsStore.settings?.manual_pin_account_id?.slice(0, 8) || '账号'
+})
+
+// 找当前活跃 pool key → 在 accountStore 里通过 email 查 windsurf_api_key
+// 后端 GetMitmProxyStatus 已用 KeyHash 严格填好 PoolKeyInfo.Email
+const activeApiKey = computed(() => {
+  const k = activeKey.value
+  if (!k?.email) return ''
+  const acc = accountStore.accounts.find((a) => a.email === k.email)
+  return (acc?.windsurf_api_key || '').trim()
+})
+
+const handleCopyActiveKey = async () => {
+  if (!activeApiKey.value) {
+    showToast('当前活跃账号未配置 API Key', 'warning')
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(activeApiKey.value)
+    const k = activeApiKey.value
+    const short = k.length > 16 ? k.slice(0, 12) + '…' + k.slice(-4) : k
+    showToast(`已复制 ${short}`, 'success')
+  } catch (e) {
+    showToast(`复制失败: ${String(e)}`, 'error')
+  }
+}
+
+const handleUnpinFromHeader = async () => {
+  try {
+    await APIInfo.unpinManualAccount()
+    await settingsStore.fetchSettings(true)
+    showToast('已解锁，自动切换已恢复', 'success')
+  } catch (e) {
+    showToast(`解锁失败: ${String(e)}`, 'error')
+  }
+}
 const poolCount = computed(() => mitmStore.status?.pool_status?.length ?? 0)
 const healthyCount = computed(() => mitmStore.status?.pool_status?.filter((item) => item.healthy).length ?? 0)
 
@@ -113,6 +172,34 @@ const sessionStateTone = computed(() =>
         />
         <span class="truncate">{{ onlineEmail }}</span>
       </div>
+
+      <!-- ★ v1.3.0 Pin 锁定徽章 + 解锁按钮 -->
+      <div
+        v-if="isPinned"
+        class="no-drag-region hidden sm:flex items-center gap-1.5 rounded-full bg-amber-500/15 border border-amber-500/30 px-3 py-1.5 text-[11px] font-bold text-amber-700 dark:text-amber-300"
+        :title="`已锁定: ${pinnedLabel} — 自动切换全部暂停`"
+      >
+        <Lock class="h-3 w-3" stroke-width="2.6" />
+        <span class="truncate max-w-[120px]">{{ pinnedLabel }}</span>
+        <button
+          type="button"
+          class="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-black text-white hover:bg-amber-600 transition-colors"
+          @click="handleUnpinFromHeader"
+        >
+          解锁
+        </button>
+      </div>
+
+      <!-- ★ v1.3.0 复制当前活跃 API Key -->
+      <button
+        v-if="activeApiKey"
+        type="button"
+        class="no-drag-region hidden md:flex h-9 w-9 items-center justify-center rounded-full border border-black/[0.06] bg-white/70 text-ios-text shadow-sm transition-colors hover:bg-black/5 dark:border-white/[0.08] dark:bg-white/[0.06] dark:text-ios-textDark dark:hover:bg-white/10"
+        title="复制当前活跃账号的 sk-ws- API Key"
+        @click="handleCopyActiveKey"
+      >
+        <Copy class="w-[16px] h-[16px]" stroke-width="2.4" />
+      </button>
 
       <button
         type="button"
