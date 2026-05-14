@@ -7,9 +7,10 @@ import (
 	"windsurf-tools-wails/backend/utils"
 )
 
-// encodeVarintField 编码一个 varint 字段: (fieldNum << 3 | 0) + varint(value)
+// encodeVarintField 编码一个 varint 字段: (fieldNum << 3 | wireType=0) + varint(value)
+// 注: wireType=0 (varint) 是 0，省略 `| 0` 因为是 no-op。如改 wire type 须改这里。
 func encodeVarintField(fieldNum, value uint64) []byte {
-	tag := writeVarint((fieldNum << 3) | 0)
+	tag := writeVarint(fieldNum << 3)
 	val := writeVarint(value)
 	result := make([]byte, 0, len(tag)+len(val))
 	result = append(result, tag...)

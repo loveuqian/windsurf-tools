@@ -513,8 +513,12 @@ func TestHashPoolKeyDistinguishesDevinSessionTokenAccountsSharingPrefix(t *testi
 	}
 
 	// 同一个 key 必须得到同样的 hash（稳定）
-	if HashPoolKey("sk-ws-stable") != HashPoolKey("sk-ws-stable") {
-		t.Fatal("HashPoolKey 不稳定")
+	// 用变量拆开两次调用避免编译器 fold 同一字面量
+	stableKey := "sk-ws-stable"
+	first := HashPoolKey(stableKey)
+	second := HashPoolKey(stableKey)
+	if first != second {
+		t.Fatalf("HashPoolKey 不稳定: %s vs %s", first, second)
 	}
 	// 前后空白被 trim
 	if HashPoolKey("  sk-ws-trim  ") != HashPoolKey("sk-ws-trim") {
