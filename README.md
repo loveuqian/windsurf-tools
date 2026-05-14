@@ -109,23 +109,42 @@ open /Applications/windsurf-tools-wails.app
 
 ### Linux
 
-依赖装好后直接运行 binary，无需额外安装步骤。
+#### 真硬性依赖（缺了 app 起不来）
+
+| 包 | 作用 |
+|---|---|
+| `libwebkit2gtk-4.1-0` (Debian/Ubuntu) / `webkit2gtk4.1` (Fedora) / `webkit2gtk-4.1` (Arch) | Wails 渲染 UI 用，**必须**装 |
+
+#### 推荐装但都有 fallback（缺了仅影响个别功能）
+
+| 包 | 缺了影响 | App 内 fallback |
+|---|---|---|
+| `ca-certificates` (提供 `update-ca-certificates`) | MITM 模式 CA 装不上 | OpenAI Relay 模式（推荐）完全不需要 |
+| `policykit-1` / `polkit` (提供 `pkexec`) | 提权弹窗换成终端密码 | 自动降级 `sudo` |
+| `libnotify-bin` / `libnotify` (提供 `notify-send`) | 系统通知中心不弹 | 自动降级 `gdbus`（glib2 自带）→ app 内 toast 始终 OK |
+| `xdg-utils` (提供 `xdg-open`) | 「在文件管理器中显示」失效 | 自动降级 `gio → kde-open5 → exo-open → gnome-open` |
+
+99% 桌面 Linux 上后 4 个早已默认装好。极简服务器 / WSL / Docker 才需手动装。
+
+#### 一键全装命令（懒人推荐）
 
 ```bash
 # Debian / Ubuntu
-sudo apt install libnotify-bin libwebkit2gtk-4.1-0 xdg-utils policykit-1 ca-certificates
+sudo apt install libwebkit2gtk-4.1-0 ca-certificates policykit-1 libnotify-bin xdg-utils
 
 # Fedora / RHEL / CentOS
-sudo dnf install libnotify webkit2gtk4.1 xdg-utils polkit ca-certificates
+sudo dnf install webkit2gtk4.1 ca-certificates polkit libnotify xdg-utils
 
 # Arch / Manjaro
-sudo pacman -S libnotify webkit2gtk-4.1 xdg-utils polkit ca-certificates
+sudo pacman -S webkit2gtk-4.1 ca-certificates polkit libnotify xdg-utils
 
 # 然后:
 unzip windsurf-tools-wails-linux-amd64.zip
 chmod +x windsurf-tools-wails
 ./windsurf-tools-wails
 ```
+
+> Dashboard 顶部「平台兼容性检查」按钮会准确告诉你**当前**缺哪个依赖、影响哪个功能、修复命令。
 
 如果遇到 `error while loading shared libraries: libwebkit2gtk-4.1.so.0` 类报错，说明缺 WebKit2GTK 4.1。Ubuntu 22.04 用户可下载 `linux-amd64-legacy.zip`（基于 WebKit2GTK 4.0）。
 
@@ -140,13 +159,14 @@ chmod +x windsurf-tools-wails
 | OpenAI Relay | ✅ | ✅ | ✅ |
 | Cascade 破限注入 | ✅ | ✅ | ✅ |
 | Clash IP 智能切换 | ✅ | ✅ | ✅ |
-| CA 自动安装 | ✅ | ✅ | ⚠️ 需 `ca-certificates` |
-| Hosts 自动写入 | ✅ | ✅ (UAC) | ✅ (pkexec/sudo) |
-| 桌面通知 | ✅ | ✅ | ⚠️ 需 `libnotify-bin` |
-| 文件管理器集成 | ✅ Finder | ✅ Explorer | ⚠️ 需 `xdg-utils` |
-| 系统托盘 | ✅ | ✅ | ⚠️ 依赖桌面环境 |
+| CA 自动安装 | ✅ | ✅ | ✅ (推荐装 `ca-certificates`) |
+| Hosts 自动写入 | ✅ | ✅ (UAC) | ✅ (pkexec → sudo 自动 fallback) |
+| 桌面通知 | ✅ | ✅ | ✅ (notify-send → gdbus → app toast 三级 fallback) |
+| 文件管理器集成 | ✅ Finder | ✅ Explorer | ✅ (xdg-open → gio → kde-open5 等链式 fallback) |
+| 系统托盘 | ✅ | ✅ | ⚠️ 依赖桌面环境 (无 tray 时仍可用窗口) |
 | 配置导出/导入 | ✅ | ✅ | ✅ |
 
+> Linux 上后 4 项即使缺包也有 fallback；唯一真硬性依赖是 `libwebkit2gtk-4.1-0`（app 启动需要）。
 > Dashboard 顶部「平台兼容性检查」按钮可一键诊断当前平台所有依赖是否就绪。
 
 ---
