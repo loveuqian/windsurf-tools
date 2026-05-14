@@ -5,17 +5,19 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Built with Wails](https://img.shields.io/badge/Built%20with-Wails%20v2-red)](https://wails.io/)
 
-> **Windsurf IDE 号池 + 纯 MITM 代理一体化工具**
-> Seamless MITM proxy for Windsurf IDE — account pool rotation, billing identity rewrite, quota sync, and a local OpenAI-compatible relay.
+> **Windsurf IDE 无限续杯工具 — 多账号自动切换、额度用完自动换号、无感代理、本地 OpenAI 接口**
+> Seamless MITM proxy for Windsurf IDE — auto account rotation when quota exhausted, batch import, local OpenAI-compatible relay. One-click setup, cross-platform.
 
 基于 [Wails v2](https://wails.io/) (Go + Vue 3) 的桌面工具，为 Windsurf / Codeium IDE 提供：
 
-- 🕵️ **纯 MITM 代理** — 劫持 `server.codeium.com` / `server.self-serve.windsurf.com`，在 protobuf 层替换 `sk-ws-` key、JWT、**F20 UserID / F32 TeamID 计费字段**，让上游按号池账号扣费而不是登录账号
-- 🎯 **号池动态切换** — Free / Trial / Pro / Max 多套餐统一管理，按会话粘性分配 pool key，避免 Cascade session 失效
-- 📊 **实时用量 & 诊断** — 统计 Windsurf / OpenAI 方向 token 流水，聚合美金成本，带完整请求审计
-- � **本地 OpenAI Relay** — SSE 流式输出，兼容 `OpenAI SDK` / `LobeChat` / `ChatGPT-Next-Web` / `Cursor`，自带健康检测和故障倒换
-- �️ **清道夫** — 一键清理 Cascade 对话残留和渲染缓存
-- 🔐 **单密码特权操作** — macOS 合并 CA 信任 / hosts 写入 / 端口 443 绑定为一次 osascript 弹窗
+- 🔄 **额度用完自动换号** — 检测到当前账号额度耗尽，秒级自动切换到下一个可用账号，Cascade 对话不中断、不报错，真正无限续杯
+- 🎯 **多账号号池管理** — Free / Trial / Pro / Max 多套餐统一管理，支持手动锁定、轮换池、会话粘性，想用哪个用哪个
+- 📥 **批量导入** — 支持 API Key / JWT / 邮箱密码 / `邮箱----devin-session-token` 等多种格式混合粘贴，智能识别一键导入
+- 🕵️ **无感 MITM 代理** — 透明劫持 Windsurf 请求，protobuf 层替换身份和计费字段，IDE 内无需任何操作
+- 🌐 **本地 OpenAI Relay** — SSE 流式输出，兼容 `OpenAI SDK` / `LobeChat` / `ChatGPT-Next-Web` / `Cursor`，自带健康检测和故障倒换
+- 📊 **实时用量统计** — Token 流水、美金成本聚合、完整请求审计，钱花在哪一目了然
+- 🧹 **清道夫** — 一键清理 Cascade 对话残留和渲染缓存，释放硬盘空间
+- 🔐 **一键启动** — macOS / Windows / Linux 全平台，CA 安装 + Hosts 配置一次弹窗搞定
 
 ---
 
