@@ -1,80 +1,67 @@
-import { defineStore } from 'pinia'
-import { ref } from 'vue'
-import { APIInfo } from '../api/wails'
-import { models } from '../../wailsjs/go/models'
+import { create } from "zustand";
+import { APIInfo } from "../api/wails";
+import { models } from "../../wailsjs/go/models";
 import {
   createDefaultSettings,
   formToSettings,
   normalizeSettings,
   normalizeSwitchPlanFilter,
   settingsToForm,
-} from '../utils/settingsModel'
+} from "../utils/settingsModel";
 
-export const useSettingsStore = defineStore('settings', () => {
-  const settings = ref<models.Settings | null>(null)
-  const isLoading = ref(true)
-  const isRefreshing = ref(false)
-  const hasLoadedOnce = ref(false)
-  let fetchInFlight: Promise<void> | null = null
-  let lastFetchedAt = 0
+interface SettingsState {
+  settings: models.Settings | null;
+  isLoading: boolean;
+  isRefreshing: boolean;
+  hasLoadedOnce: boolean;
 
-  const fetchSettings = async (force = false) => {
-    const now = Date.now()
-    // force=true 不复用 in-flight；调用方通常是 settings 刚被 update 的场景，
-    // 必须拿到最新值。
-    if (fetchInFlight && !force) {
-      return fetchInFlight
-    }
-    if (!force && settings.value && now-lastFetchedAt < 2500) {
-      return
-    }
-    const blocking = !hasLoadedOnce.value || settings.value == null
-    if (blocking) {
-      isLoading.value = true
-    } else {
-      isRefreshing.value = true
-    }
+  fetchSettings: (force?: boolean) => Promise<void> | void;
+  updateSettings: (payload: models.Settings) => Promise<void>;
+  saveAutoSwitchPlanFilter: (filter: string) => Promise<void>;
+}
+
+let fetchInFlight: Promise<void> | null = null;
+let lastFetchedAt = 0;
+
+export const useSettingsStore = create<SettingsState>((set, get) => ({
+  settings: null,
+  isLoading: true,
+  isRefreshing: false,
+  hasLoadedOnce: false,
+
+  fetchSettings: async (force = false) => {
+    const now = Date.now();
+    if (fetchInFlight && !force) return fetchInFlight;
+    if (!force && get().settings && now - lastFetchedAt < 2500) return;
+    const blocking = !get().hasLoadedOnce || get().settings == null;
+    set(blocking ? { isLoading: true } : { isRefreshing: true });
     fetchInFlight = (async () => {
       try {
-        const data = await APIInfo.getSettings()
-        settings.value = normalizeSettings(data)
+        const data = await APIInfo.getSettings();
+        set({ settings: normalizeSettings(data) });
       } catch (e) {
-        console.error('Failed to fetch settings:', e)
-        settings.value = createDefaultSettings()
+        console.error("Failed to fetch settings:", e);
+        set({ settings: createDefaultSettings() });
       } finally {
-        lastFetchedAt = Date.now()
-        hasLoadedOnce.value = true
-        if (blocking) {
-          isLoading.value = false
-        } else {
-          isRefreshing.value = false
-        }
-        fetchInFlight = null
+        lastFetchedAt = Date.now();
+        set({ hasLoadedOnce: true });
+        if (blocking) set({ isLoading: false });
+        else set({ isRefreshing: false });
+        fetchInFlight = null;
       }
-    })()
-    return fetchInFlight
-  }
+    })();
+    return fetchInFlight;
+  },
 
-  const updateSettings = async (payload: models.Settings) => {
-    await APIInfo.updateSettings(payload)
-    settings.value = normalizeSettings(payload)
-  }
+  updateSettings: async (payload) => {
+    await APIInfo.updateSettings(payload);
+    set({ settings: normalizeSettings(payload) });
+  },
 
-  /** 仅更新「无感下一席位」计划筛选并写回设置文件 */
-  const saveAutoSwitchPlanFilter = async (filter: string) => {
-    const base = normalizeSettings(settings.value ?? createDefaultSettings())
-    const form = settingsToForm(base)
-    form.auto_switch_plan_filter = normalizeSwitchPlanFilter(filter)
-    await updateSettings(formToSettings(form))
-  }
-
-  return {
-    settings,
-    isLoading,
-    isRefreshing,
-    hasLoadedOnce,
-    fetchSettings,
-    updateSettings,
-    saveAutoSwitchPlanFilter,
-  }
-})
+  saveAutoSwitchPlanFilter: async (filter) => {
+    const base = normalizeSettings(get().settings ?? createDefaultSettings());
+    const form = settingsToForm(base);
+    form.auto_switch_plan_filter = normalizeSwitchPlanFilter(filter);
+    await get().updateSettings(formToSettings(form));
+  },
+}));

@@ -1,5 +1,4 @@
-import { defineStore } from "pinia";
-import { ref } from "vue";
+import { create } from "zustand";
 import { APIInfo } from "../api/wails";
 
 type RelayStatus = {
@@ -8,64 +7,50 @@ type RelayStatus = {
   url?: string;
 };
 
-export const useRelayStatusStore = defineStore("relayStatus", () => {
-  const status = ref<RelayStatus | null>(null);
-  const isLoading = ref(false);
-  const isRefreshing = ref(false);
-  const hasLoadedOnce = ref(false);
-  let fetchInFlight: Promise<void> | null = null;
-  let lastFetchedAt = 0;
+interface RelayStatusState {
+  status: RelayStatus | null;
+  isLoading: boolean;
+  isRefreshing: boolean;
+  hasLoadedOnce: boolean;
+  fetchStatus: (force?: boolean) => Promise<void> | void;
+  ensureStatusLoaded: (maxAgeMs?: number) => Promise<void> | void;
+}
 
-  const fetchStatus = async (force = false) => {
+let fetchInFlight: Promise<void> | null = null;
+let lastFetchedAt = 0;
+
+export const useRelayStatusStore = create<RelayStatusState>((set, get) => ({
+  status: null,
+  isLoading: false,
+  isRefreshing: false,
+  hasLoadedOnce: false,
+
+  fetchStatus: async (force = false) => {
     const now = Date.now();
-    if (fetchInFlight) {
-      return fetchInFlight;
-    }
-    if (!force && hasLoadedOnce.value && now - lastFetchedAt < 10_000) {
-      return;
-    }
-
-    const blocking = !hasLoadedOnce.value;
-    if (blocking) {
-      isLoading.value = true;
-    } else {
-      isRefreshing.value = true;
-    }
-
+    if (fetchInFlight) return fetchInFlight;
+    if (!force && get().hasLoadedOnce && now - lastFetchedAt < 10_000) return;
+    const blocking = !get().hasLoadedOnce;
+    set(blocking ? { isLoading: true } : { isRefreshing: true });
     fetchInFlight = (async () => {
       try {
-        status.value = await APIInfo.getOpenAIRelayStatus();
+        const s = await APIInfo.getOpenAIRelayStatus();
+        set({ status: s as RelayStatus });
       } catch (error) {
         console.error("getOpenAIRelayStatus error:", error);
       } finally {
         lastFetchedAt = Date.now();
-        hasLoadedOnce.value = true;
-        if (blocking) {
-          isLoading.value = false;
-        } else {
-          isRefreshing.value = false;
-        }
+        set({ hasLoadedOnce: true });
+        if (blocking) set({ isLoading: false });
+        else set({ isRefreshing: false });
         fetchInFlight = null;
       }
     })();
-
     return fetchInFlight;
-  };
+  },
 
-  const ensureStatusLoaded = async (maxAgeMs = 10_000) => {
+  ensureStatusLoaded: async (maxAgeMs = 10_000) => {
     const now = Date.now();
-    if (hasLoadedOnce.value && now - lastFetchedAt < maxAgeMs) {
-      return;
-    }
-    return fetchStatus();
-  };
-
-  return {
-    status,
-    isLoading,
-    isRefreshing,
-    hasLoadedOnce,
-    fetchStatus,
-    ensureStatusLoaded,
-  };
-});
+    if (get().hasLoadedOnce && now - lastFetchedAt < maxAgeMs) return;
+    return get().fetchStatus();
+  },
+}));

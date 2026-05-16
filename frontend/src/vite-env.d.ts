@@ -3,9 +3,3 @@
 interface ImportMetaEnv {
   readonly VITE_APP_VERSION: string
 }
-
-declare module '*.vue' {
-    import type {DefineComponent} from 'vue'
-    const component: DefineComponent<{}, {}, any>
-    export default component
-}

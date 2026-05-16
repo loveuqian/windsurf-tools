@@ -3,7 +3,7 @@ import {readFileSync} from 'fs'
 import {resolve, dirname} from 'path'
 import {fileURLToPath} from 'url'
 import {defineConfig} from 'vite'
-import vue from '@vitejs/plugin-vue'
+import react from '@vitejs/plugin-react'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8')) as {version: string}
@@ -25,7 +25,7 @@ export default defineConfig({
   define: {
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(pkg.version),
   },
-  plugins: [vue(), stripModuleScriptCrossorigin()],
+  plugins: [react(), stripModuleScriptCrossorigin()],
   server: {
     host: '127.0.0.1',
     port: 3457,
