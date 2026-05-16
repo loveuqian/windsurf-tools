@@ -55,7 +55,7 @@ const openGithub = () => window.open(REPO_URL, "_blank", "noopener");
     <!-- 顶部：app logo + 版本 + 标语 -->
     <header class="flex flex-col items-center text-center mb-10">
       <div
-        class="w-24 h-24 rounded-[28px] bg-gradient-to-br from-ios-blue to-violet-500 text-white flex items-center justify-center shadow-[0_16px_40px_rgba(37,99,235,0.32)] mb-5"
+        class="w-24 h-24 rounded-ios-card bg-gradient-to-br from-ios-blue to-violet-500 text-white flex items-center justify-center shadow-[0_16px_40px_rgba(37,99,235,0.32)] mb-5"
       >
         <ShieldCheck class="h-12 w-12" stroke-width="2.4" />
       </div>
@@ -104,7 +104,7 @@ const openGithub = () => window.open(REPO_URL, "_blank", "noopener");
         </p>
         <button
           type="button"
-          class="no-drag-region group relative w-full max-w-[200px] rounded-[16px] overflow-hidden bg-white shadow-md ring-1 ring-black/[0.05] transition-all ios-btn hover:shadow-lg"
+          class="no-drag-region group relative w-full max-w-[200px] rounded-ios-block overflow-hidden bg-white shadow-md ring-1 ring-black/[0.05] transition-all ios-btn hover:shadow-lg"
           @click="openLightbox(authorWechatImg, '作者微信 — Seven')"
         >
           <img
@@ -144,7 +144,7 @@ const openGithub = () => window.open(REPO_URL, "_blank", "noopener");
         </p>
         <button
           type="button"
-          class="no-drag-region group relative w-full max-w-[200px] rounded-[16px] overflow-hidden bg-white shadow-md ring-1 ring-black/[0.05] transition-all ios-btn hover:shadow-lg"
+          class="no-drag-region group relative w-full max-w-[200px] rounded-ios-block overflow-hidden bg-white shadow-md ring-1 ring-black/[0.05] transition-all ios-btn hover:shadow-lg"
           @click="openLightbox(sponsorQrImg, '赞赏码 — 给 Seven 赞赏')"
         >
           <img
@@ -184,7 +184,7 @@ const openGithub = () => window.open(REPO_URL, "_blank", "noopener");
         </p>
         <button
           type="button"
-          class="no-drag-region group relative w-full max-w-[200px] rounded-[16px] overflow-hidden bg-white shadow-md ring-1 ring-black/[0.05] transition-all ios-btn hover:shadow-lg"
+          class="no-drag-region group relative w-full max-w-[200px] rounded-ios-block overflow-hidden bg-white shadow-md ring-1 ring-black/[0.05] transition-all ios-btn hover:shadow-lg"
           @click="openLightbox(currentGroupImg, `微信群 ${groupIndex + 1}`)"
         >
           <img

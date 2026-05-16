@@ -10,6 +10,7 @@ import {
 } from "vue";
 import { useSettingsStore } from "../stores/useSettingsStore";
 import { useAccountStore } from "../stores/useAccountStore";
+import { useMainViewStore } from "../stores/useMainViewStore";
 import IToggle from "../components/ios/IToggle.vue";
 import INumberStepper from "../components/ios/INumberStepper.vue";
 import ISelectSheet from "../components/ios/ISelectSheet.vue";
@@ -38,11 +39,12 @@ import {
   Globe,
   Sparkles,
 } from "lucide-vue-next";
-import { confirmDialog, showToast } from "../utils/toast";
+import { confirmDialog, showToast, showErrorToast } from "../utils/toast";
 import { APIInfo } from "../api/wails";
 
 const settingsStore = useSettingsStore();
 const accountStore = useAccountStore();
+const mainView = useMainViewStore();
 let autoSaveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let saveStateResetTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -164,7 +166,7 @@ const persistLocalSettings = async () => {
     });
   } catch (e) {
     saveState.value = "error";
-    showToast(`自动保存失败: ${String(e)}`, "error");
+    showErrorToast(e, "自动保存失败");
     clashSyncing.value = false;
   } finally {
     isSaving.value = false;
@@ -212,7 +214,7 @@ const handleRelayToggle = async (enabled: boolean) => {
     }
     await fetchRelayStatus();
   } catch (e) {
-    showToast(`中转操作失败: ${String(e)}`, "error");
+    showErrorToast(e, "中转操作失败");
   } finally {
     relayLoading.value = false;
   }
@@ -342,7 +344,7 @@ const handleOpenOverrideFile = async () => {
     showToast(`已用默认编辑器打开 ${path}`, "success");
     setTimeout(fetchJailbreakRuntime, 500);
   } catch (e) {
-    showToast(`打开失败: ${String(e)}`, "error");
+    showErrorToast(e, "打开失败");
   }
 };
 
@@ -350,7 +352,7 @@ const handleRevealOverrideFolder = async () => {
   try {
     await APIInfo.revealJailbreakOverrideFolder();
   } catch (e) {
-    showToast(`显示位置失败: ${String(e)}`, "error");
+    showErrorToast(e, "显示位置失败");
   }
 };
 
@@ -365,7 +367,7 @@ const handleSaveOverrideToFile = async () => {
     showToast(`已保存到 ${path}`, "success");
     await fetchJailbreakRuntime();
   } catch (e) {
-    showToast(`保存失败: ${String(e)}`, "error");
+    showErrorToast(e, "保存失败");
   }
 };
 
@@ -375,7 +377,7 @@ const handleResetJailbreakStats = async () => {
     await fetchJailbreakRuntime();
     showToast("注入计数已清零", "success");
   } catch (e) {
-    showToast(`清零失败: ${String(e)}`, "error");
+    showErrorToast(e, "清零失败");
   }
 };
 
@@ -500,7 +502,7 @@ const handleUnpinManual = async () => {
     await settingsStore.fetchSettings(true);
     showToast("已解除锁定，自动切换已恢复", "success");
   } catch (e) {
-    showToast(`解锁失败: ${String(e)}`, "error");
+    showErrorToast(e, "解锁失败");
   }
 };
 
@@ -510,7 +512,7 @@ const handlePoolSwitchNow = async () => {
     await fetchPoolStatus();
     showToast("已触发立即切换", "success");
   } catch (e) {
-    showToast(`切换失败: ${String(e)}`, "error");
+    showErrorToast(e, "切换失败");
   }
 };
 
@@ -531,7 +533,7 @@ const handleExportSettings = async () => {
     URL.revokeObjectURL(url);
     showToast("配置已导出（敏感字段已剥离）", "success");
   } catch (e) {
-    showToast(`导出失败: ${String(e)}`, "error");
+    showErrorToast(e, "导出失败");
   }
 };
 
@@ -553,7 +555,7 @@ const handleImportSettings = async () => {
       await settingsStore.fetchSettings(true);
       showToast(`已从 ${file.name} 导入配置`, "success");
     } catch (e) {
-      showToast(`导入失败: ${String(e)}`, "error");
+      showErrorToast(e, "导入失败");
     }
   };
   input.click();
@@ -567,7 +569,7 @@ const handlePoolRefreshQuotasNow = async () => {
     // 给后台 2 秒刷完再 fetch 状态
     setTimeout(fetchPoolStatus, 2000);
   } catch (e) {
-    showToast(`刷新失败: ${String(e)}`, "error");
+    showErrorToast(e, "刷新失败");
   }
 };
 
@@ -683,7 +685,7 @@ const handleListClashNodes = async () => {
       showToast(`「${groupLabel}」已获取 ${clashNodes.value.length} 个节点`, "success");
     }
   } catch (e) {
-    showToast(`获取节点失败: ${String(e)}`, "error");
+    showErrorToast(e, "获取节点失败");
   } finally {
     clashNodesLoading.value = false;
   }
@@ -694,21 +696,48 @@ const handleTriggerRotate = async () => {
     await APIInfo.triggerClashRotate();
     showToast("已触发手动轮换", "success");
   } catch (e) {
-    showToast(`触发失败: ${String(e)}`, "error");
+    showErrorToast(e, "触发失败");
   }
 };
 
-onUnmounted(() => {
+// F4 修复：App.vue 用 v-show 持久挂载所有视图，onUnmounted 实际不会触发，
+// 切走 Settings 后 IntersectionObserver / autoSave debounce timer 会一直
+// 持有引用。改用 watch(mainView.activeTab) 在切走时主动收尾、切回时重启。
+const teardownSettingsResources = (flushAutoSave: boolean) => {
   sectionObserver?.disconnect();
+  sectionObserver = null;
   if (autoSaveDebounceTimer) {
     clearTimeout(autoSaveDebounceTimer);
     autoSaveDebounceTimer = null;
-    void persistLocalSettings();
+    if (flushAutoSave) {
+      void persistLocalSettings();
+    }
   }
   if (saveStateResetTimer) {
     clearTimeout(saveStateResetTimer);
     saveStateResetTimer = null;
   }
+};
+
+watch(
+  () => mainView.activeTab,
+  (tab, prev) => {
+    if (tab === "Settings" && prev !== "Settings") {
+      // 切回 Settings：重新挂 observer
+      void nextTick(() => setupSectionObserver());
+      return;
+    }
+    if (tab !== "Settings" && prev === "Settings") {
+      // 切走 Settings：把待保存的设置先 flush 出去，再释放资源
+      teardownSettingsResources(true);
+    }
+  },
+);
+
+onUnmounted(() => {
+  // 真正卸载（如热更新 / 应用退出）时也走一次收尾，flushAutoSave=true
+  // 避免丢掉用户最后一次未保存的输入。
+  teardownSettingsResources(true);
 });
 </script>
 
@@ -803,7 +832,7 @@ onUnmounted(() => {
 
     <Transition name="fade" mode="out-in">
       <div
-        v-if="settingsStore.isLoading"
+        v-if="!settingsStore.hasLoadedOnce && settingsStore.isLoading"
         key="settings-loading"
         class="space-y-8 w-full"
       >
@@ -1902,6 +1931,28 @@ onUnmounted(() => {
               </div>
               <IToggle v-model="local.static_cache_intercept" />
             </div>
+
+            <!-- F7-REMOVAL-BEGIN: 整段卡片在发布前删除 -->
+            <div
+              class="p-5 sm:p-6 flex items-center justify-between gap-4 bg-emerald-500/[0.03] border-t border-black/[0.04] dark:border-white/[0.04]"
+              title="仅作者自用，发布版会移除此开关"
+            >
+              <div class="flex-1 pr-4">
+                <div class="text-[15px] font-bold text-gray-900 dark:text-gray-100 mb-1 flex items-center gap-2">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> SmartFriend 模式 (F7 Patch)
+                  <span class="ml-1 inline-flex items-center rounded-ios-pill bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-wide">
+                    Author-only
+                  </span>
+                </div>
+                <div class="text-[13px] text-gray-500 dark:text-gray-400">
+                  将 GetChatMessage 请求类型从 CASCADE(5) 改为 SMART_FRIEND(13)，绕过日/周额度限制。开启后所有 chat 请求走 SmartFriend 通道。
+                  <span class="text-emerald-700 dark:text-emerald-400"> · 仅作者自用，发布前会一键移除。</span>
+                </div>
+              </div>
+              <IToggle v-model="local.smart_friend_enabled" />
+            </div>
+            <!-- F7-REMOVAL-END -->
+
 
             <div
               class="p-5 sm:p-6 flex items-center justify-between gap-4 bg-amber-500/[0.03]"

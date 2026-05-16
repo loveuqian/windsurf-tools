@@ -138,6 +138,10 @@ func (a *App) restartQuotaHotPollIfNeeded() {
 	if !settings.AutoRefreshQuotas || !settings.AutoSwitchOnQuotaExhausted {
 		return
 	}
+	// F7-REMOVAL: 下面 if SmartFriendEnabled 分支删除
+	if settings.SmartFriendEnabled {
+		return
+	}
 	ctx, cancel := context.WithCancel(a.ctx)
 	a.cancelQuotaHotPoll = cancel
 	go a.quotaHotPollLoop(ctx)
@@ -180,6 +184,11 @@ func (a *App) pollCurrentSessionQuotaAndMaybeSwitch() {
 	settings := a.store.GetSettings()
 	if !settings.AutoRefreshQuotas || !settings.AutoSwitchOnQuotaExhausted {
 		utils.DLog("[热轮询] 跳过: AutoRefreshQuotas=%v AutoSwitch=%v", settings.AutoRefreshQuotas, settings.AutoSwitchOnQuotaExhausted)
+		return
+	}
+	// F7-REMOVAL: 下面 if SmartFriendEnabled 分支删除
+	if settings.SmartFriendEnabled {
+		utils.DLog("[热轮询] 跳过: SmartFriend 模式已开启，不检测额度")
 		return
 	}
 	// Pin 优先：手动锁定时连热轮询额度刷新都做（让用户看到新数据），但
@@ -360,7 +369,15 @@ func (a *App) refreshDueQuotas() {
 	}
 
 	// Pin 优先：手动锁定时跳过自动切（额度同步本身已完成不影响）
-	if settings.AutoSwitchOnQuotaExhausted && !settings.ManualPinEnabled {
+	// F7-REMOVAL: 下两行注释 + case settings.SmartFriendEnabled 分支一并删除
+	// SmartFriend(F7) 优先：服务端按 SMART_FRIEND 计费、绕过日/周限额，
+	// 「显示耗尽」实际仍可用，定期同步后不应触发自动切号。
+	switch {
+	case settings.SmartFriendEnabled:
+		utils.DLog("[额度同步] SmartFriend 生效，跳过定期同步后的自动切号")
+	case settings.ManualPinEnabled && settings.AutoSwitchOnQuotaExhausted:
+		utils.DLog("[额度同步] ManualPin 生效，跳过定期同步后的自动切号")
+	case settings.AutoSwitchOnQuotaExhausted:
 		curID := a.findCurrentMonitoredAccountID()
 		if curID != "" {
 			if cur, err := a.store.GetAccount(curID); err == nil && utils.AccountQuotaExhausted(&cur) {
@@ -368,8 +385,6 @@ func (a *App) refreshDueQuotas() {
 				switchAfterUnlock.planFilter = settings.AutoSwitchPlanFilter
 			}
 		}
-	} else if settings.ManualPinEnabled && settings.AutoSwitchOnQuotaExhausted {
-		utils.DLog("[额度同步] ManualPin 生效，跳过定期同步后的自动切号")
 	}
 
 	if updatedPool {

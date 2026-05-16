@@ -15,7 +15,7 @@ import IToggle from "../components/ios/IToggle.vue";
 import PageLoadingSkeleton from "../components/common/PageLoadingSkeleton.vue";
 import SkeletonOverlay from "../components/common/SkeletonOverlay.vue";
 import { APIInfo } from "../api/wails";
-import { showToast } from "../utils/toast";
+import { showToast, showErrorToast } from "../utils/toast";
 import { useSettingsStore } from "../stores/useSettingsStore";
 import { useMitmStatusStore } from "../stores/useMitmStatusStore";
 import { useRelayStatusStore } from "../stores/useRelayStatusStore";
@@ -70,7 +70,7 @@ const handleToggle = async (on: boolean) => {
     await fetchRelayStatus();
     showToast(on ? "Relay 已启动" : "Relay 已停止", "success");
   } catch (e: any) {
-    showToast(`Relay ${on ? "启动" : "停止"}失败: ${String(e)}`, "error");
+    showErrorToast(e, "Relay ${on ? \"启动\" : \"停止\"}失败");
   } finally {
     relayLoading.value = false;
   }
@@ -157,7 +157,7 @@ const handleTest = async () => {
     <div class="p-6 space-y-6 max-w-4xl mx-auto">
       <!-- 头部 -->
       <div
-        class="rounded-[28px] border border-black/[0.05] dark:border-white/[0.06] overflow-hidden shadow-[0_20px_48px_-20px_rgba(15,23,42,0.18)] ios-glass"
+        class="rounded-ios-card border border-black/[0.05] dark:border-white/[0.06] overflow-hidden shadow-[0_20px_48px_-20px_rgba(15,23,42,0.18)] ios-glass"
       >
         <div
           class="border-b border-black/[0.05] dark:border-white/[0.06] bg-[radial-gradient(circle_at_top_left,rgba(139,92,246,0.14),transparent_35%),linear-gradient(180deg,rgba(255,255,255,0.82),rgba(255,255,255,0.68))] px-6 py-5 dark:bg-[radial-gradient(circle_at_top_left,rgba(167,139,250,0.18),transparent_35%),linear-gradient(180deg,rgba(28,28,30,0.94),rgba(28,28,30,0.84))]"
@@ -204,7 +204,7 @@ const handleTest = async () => {
 
             <div class="grid grid-cols-2 gap-2 text-right">
               <div
-                class="rounded-[16px] bg-white/80 px-3 py-2 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/[0.05] dark:ring-white/[0.06]"
+                class="rounded-ios-block bg-white/80 px-3 py-2 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/[0.05] dark:ring-white/[0.06]"
               >
                 <div
                   class="text-[10px] font-bold uppercase tracking-[0.18em] text-ios-textSecondary dark:text-ios-textSecondaryDark"
@@ -218,7 +218,7 @@ const handleTest = async () => {
                 </div>
               </div>
               <div
-                class="rounded-[16px] bg-white/80 px-3 py-2 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/[0.05] dark:ring-white/[0.06]"
+                class="rounded-ios-block bg-white/80 px-3 py-2 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/[0.05] dark:ring-white/[0.06]"
               >
                 <div
                   class="text-[10px] font-bold uppercase tracking-[0.18em] text-ios-textSecondary dark:text-ios-textSecondaryDark"

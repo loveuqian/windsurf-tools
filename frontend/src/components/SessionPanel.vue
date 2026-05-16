@@ -57,7 +57,7 @@ const handleUnbind = async (convIDShort: string) => {
       <div
         v-for="(s, index) in sessions"
         :key="`${s.conv_id || s.conv_id_short}-${index}`"
-        class="flex items-center justify-between gap-3 rounded-[16px] border border-black/[0.05] bg-black/[0.03] px-3 py-2.5 text-[12px] dark:border-white/[0.06] dark:bg-white/[0.03]"
+        class="flex items-center justify-between gap-3 rounded-ios-block border border-black/[0.05] bg-black/[0.03] px-3 py-2.5 text-[12px] dark:border-white/[0.06] dark:bg-white/[0.03]"
       >
         <div class="flex min-w-0 items-center gap-2.5">
           <Hash

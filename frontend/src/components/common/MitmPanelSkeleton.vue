@@ -24,9 +24,9 @@ import SkeletonBlock from "./SkeletonBlock.vue";
         <SkeletonBlock class="h-5 w-16 rounded-full" />
       </div>
       <div class="space-y-2">
-        <SkeletonBlock class="h-12 w-full rounded-[16px]" />
-        <SkeletonBlock class="h-12 w-full rounded-[16px]" />
-        <SkeletonBlock class="h-12 w-full rounded-[16px]" />
+        <SkeletonBlock class="h-12 w-full rounded-ios-block" />
+        <SkeletonBlock class="h-12 w-full rounded-ios-block" />
+        <SkeletonBlock class="h-12 w-full rounded-ios-block" />
       </div>
     </div>
 
@@ -46,13 +46,13 @@ import SkeletonBlock from "./SkeletonBlock.vue";
         <SkeletonBlock class="h-5 w-20 rounded-full" />
       </div>
       <div class="space-y-2">
-        <SkeletonBlock class="h-11 w-full rounded-[16px]" />
-        <SkeletonBlock class="h-11 w-full rounded-[16px]" />
-        <SkeletonBlock class="h-11 w-full rounded-[16px]" />
-        <SkeletonBlock class="h-11 w-full rounded-[16px]" />
+        <SkeletonBlock class="h-11 w-full rounded-ios-block" />
+        <SkeletonBlock class="h-11 w-full rounded-ios-block" />
+        <SkeletonBlock class="h-11 w-full rounded-ios-block" />
+        <SkeletonBlock class="h-11 w-full rounded-ios-block" />
       </div>
     </div>
 
-    <SkeletonBlock class="h-11 w-full rounded-[16px]" />
+    <SkeletonBlock class="h-11 w-full rounded-ios-block" />
   </div>
 </template>

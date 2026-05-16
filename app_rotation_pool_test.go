@@ -41,9 +41,10 @@ func TestStringSliceEqual(t *testing.T) {
 
 func TestRotationPoolMemberUsable(t *testing.T) {
 	cases := []struct {
-		name string
-		acc  models.Account
-		want bool
+		name        string
+		acc         models.Account
+		bypassQuota bool
+		want        bool
 	}{
 		{
 			name: "has key + active + quota OK",
@@ -65,10 +66,29 @@ func TestRotationPoolMemberUsable(t *testing.T) {
 			acc:  models.Account{Email: "d", WindsurfAPIKey: "sk-ws-d", Status: "expired", DailyRemaining: "60.00%"},
 			want: false,
 		},
+		{
+			name: "exhausted account is denied",
+			acc:  models.Account{Email: "e", WindsurfAPIKey: "sk-ws-e", Status: "active", DailyRemaining: "0.00%", WeeklyRemaining: "0.00%"},
+			want: false,
+		},
+		{
+			// SmartFriend(F7) bypass：服务端按 SMART_FRIEND 计费、绕过日/周限额，
+			// 轮换池中「显示耗尽」的账号仍应被选中。
+			name:        "exhausted account allowed when bypassQuota",
+			acc:         models.Account{Email: "e", WindsurfAPIKey: "sk-ws-e", Status: "active", DailyRemaining: "0.00%", WeeklyRemaining: "0.00%"},
+			bypassQuota: true,
+			want:        true,
+		},
+		{
+			name:        "disabled remains denied even with bypassQuota",
+			acc:         models.Account{Email: "f", WindsurfAPIKey: "sk-ws-f", Status: "disabled", DailyRemaining: "60.00%"},
+			bypassQuota: true,
+			want:        false,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := rotationPoolMemberUsable(&c.acc); got != c.want {
+			if got := rotationPoolMemberUsable(&c.acc, c.bypassQuota); got != c.want {
 				t.Errorf("got %v, want %v (account=%+v)", got, c.want, c.acc)
 			}
 		})
@@ -84,22 +104,22 @@ func TestPickNextRotationPoolMember_RotatesThroughPool(t *testing.T) {
 	members := []string{"a", "b", "c"}
 
 	// 当前 a → 下一个 b
-	next := pickNextRotationPoolMember(all, members, "a")
+	next := pickNextRotationPoolMember(all, members, "a", false)
 	if next == nil || next.ID != "b" {
 		t.Errorf("from a, next should be b, got %v", next)
 	}
 	// 当前 b → 下一个 c
-	next = pickNextRotationPoolMember(all, members, "b")
+	next = pickNextRotationPoolMember(all, members, "b", false)
 	if next == nil || next.ID != "c" {
 		t.Errorf("from b, next should be c, got %v", next)
 	}
 	// 当前 c → 绕回 a
-	next = pickNextRotationPoolMember(all, members, "c")
+	next = pickNextRotationPoolMember(all, members, "c", false)
 	if next == nil || next.ID != "a" {
 		t.Errorf("from c, next should be a (wrap), got %v", next)
 	}
 	// 当前不在池内 → 取第一个可用 (a)
-	next = pickNextRotationPoolMember(all, members, "outside")
+	next = pickNextRotationPoolMember(all, members, "outside", false)
 	if next == nil || next.ID != "a" {
 		t.Errorf("from outside, next should be a, got %v", next)
 	}
@@ -113,9 +133,30 @@ func TestPickNextRotationPoolMember_SkipsUnusable(t *testing.T) {
 	}
 	members := []string{"a", "b", "c"}
 	// 当前 a → 下一个 b 不可用 → c
-	next := pickNextRotationPoolMember(all, members, "a")
+	next := pickNextRotationPoolMember(all, members, "a", false)
 	if next == nil || next.ID != "c" {
 		t.Errorf("from a (b skipped), next should be c, got %v", next)
+	}
+}
+
+// SmartFriend bypass：轮换池里全部「额度耗尽」的账号，F7 开启时仍应能轮转。
+func TestPickNextRotationPoolMember_BypassQuotaAllowsExhausted(t *testing.T) {
+	all := []models.Account{
+		{ID: "a", Email: "a", WindsurfAPIKey: "sk-a", Status: "active", DailyRemaining: "0.00%", WeeklyRemaining: "0.00%"},
+		{ID: "b", Email: "b", WindsurfAPIKey: "sk-b", Status: "active", DailyRemaining: "0.00%", WeeklyRemaining: "0.00%"},
+		{ID: "c", Email: "c", WindsurfAPIKey: "sk-c", Status: "active", DailyRemaining: "0.00%", WeeklyRemaining: "0.00%"},
+	}
+	members := []string{"a", "b", "c"}
+
+	// 非 bypass：都耗尽 → nil
+	if got := pickNextRotationPoolMember(all, members, "a", false); got != nil {
+		t.Errorf("bypass=false, all exhausted: got %v, want nil", got)
+	}
+
+	// SmartFriend bypass=true：从 a 转下一个 → b
+	next := pickNextRotationPoolMember(all, members, "a", true)
+	if next == nil || next.ID != "b" {
+		t.Errorf("bypass=true, from a should pick b, got %v", next)
 	}
 }
 
@@ -125,7 +166,7 @@ func TestPickNextRotationPoolMember_AllUnusableReturnsNil(t *testing.T) {
 		{ID: "b", Status: "expired"},
 	}
 	members := []string{"a", "b"}
-	if got := pickNextRotationPoolMember(all, members, "a"); got != nil {
+	if got := pickNextRotationPoolMember(all, members, "a", false); got != nil {
 		t.Errorf("all unusable should return nil, got %v", got)
 	}
 }
@@ -135,7 +176,7 @@ func TestPickNextRotationPoolMember_MissingFromAllSkipped(t *testing.T) {
 		{ID: "a", Email: "a", WindsurfAPIKey: "sk-a", Status: "active", DailyRemaining: "80%"},
 	}
 	members := []string{"a", "ghost", "missing"}
-	next := pickNextRotationPoolMember(all, members, "a")
+	next := pickNextRotationPoolMember(all, members, "a", false)
 	// 池里指向不存在账号会被 skip，绕回 a 本身但 a == currentID 被排除 → nil
 	if next != nil {
 		t.Errorf("from a with no other valid members, should return nil, got %v", next)

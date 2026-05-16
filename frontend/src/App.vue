@@ -14,6 +14,13 @@ import AppFooter from "./components/layout/AppFooter.vue";
 import IConfirm from "./components/ios/IConfirm.vue";
 import IToast from "./components/ios/IToast.vue";
 import PageLoadingSkeleton from "./components/common/PageLoadingSkeleton.vue";
+// 3 个核心 view 用 eager import 进入主 bundle —— 避免 Suspense fallback
+// 把 PageLoadingSkeleton 顶替成空白主区（首次切到 Accounts 时 chunk 仍在解析
+// 会让用户看到 6 个骨架卡片，体感像「号池加载不出来」）。
+// 其余 5 个 view 保留懒加载，控制主 bundle 体积。
+import DashboardView from "./views/Dashboard.vue";
+import AccountsView from "./views/Accounts.vue";
+import SettingsView from "./views/Settings.vue";
 import { useAccountStore } from "./stores/useAccountStore";
 import { useSettingsStore } from "./stores/useSettingsStore";
 import { useMitmStatusStore } from "./stores/useMitmStatusStore";
@@ -47,37 +54,36 @@ const viewLoaders: Record<ShellViewTab, () => Promise<AsyncViewModule>> = {
 const preloadedViews = new Set<ShellViewTab>();
 
 const viewRegistry = {
-  Dashboard: {
-    component: defineAsyncComponent(viewLoaders.Dashboard),
-    skeleton: "dashboard",
-  },
-  Accounts: {
-    component: defineAsyncComponent(viewLoaders.Accounts),
-    skeleton: "accounts",
-  },
+  // ── 核心 view：eager import，直接 component 不走 defineAsyncComponent
+  //    避免 Suspense fallback 让用户初次切过来时看到骨架卡片。
+  Dashboard: { component: DashboardView, skeleton: "dashboard", eager: true },
+  Accounts: { component: AccountsView, skeleton: "accounts", eager: true },
+  Settings: { component: SettingsView, skeleton: "settings", eager: true },
+  // ── 次要 view：保留懒加载，控制主 bundle 体积。
   Usage: {
     component: defineAsyncComponent(viewLoaders.Usage),
     skeleton: "usage",
+    eager: false,
   },
   Relay: {
     component: defineAsyncComponent(viewLoaders.Relay),
     skeleton: "relay",
+    eager: false,
   },
   Cleanup: {
     component: defineAsyncComponent(viewLoaders.Cleanup),
     skeleton: "settings",
-  },
-  Settings: {
-    component: defineAsyncComponent(viewLoaders.Settings),
-    skeleton: "settings",
+    eager: false,
   },
   Help: {
     component: defineAsyncComponent(viewLoaders.Help),
     skeleton: "settings",
+    eager: false,
   },
   About: {
     component: defineAsyncComponent(viewLoaders.About),
     skeleton: "settings",
+    eager: false,
   },
 } as const;
 
@@ -95,6 +101,11 @@ const ensureViewMounted = (tab: ShellViewTab) => {
 };
 
 const preloadView = async (tab: ShellViewTab) => {
+  // eager view 已在主 bundle 中，无需再次 import
+  if (viewRegistry[tab].eager) {
+    preloadedViews.add(tab);
+    return;
+  }
   if (preloadedViews.has(tab)) {
     return;
   }
@@ -125,6 +136,7 @@ const renderedViews = computed(() =>
     key: tab,
     component: viewRegistry[tab].component,
     skeleton: viewRegistry[tab].skeleton,
+    eager: viewRegistry[tab].eager,
   })),
 );
 
@@ -158,7 +170,9 @@ onMounted(async () => {
     console.error("App bootstrap accounts fetch failed:", error);
   });
 
-  // 从后台切回前台时仅刷新 MITM 相关数据，避免旧 Auth 路径带来的额外抖动
+  // 从后台切回前台时统一在这里刷新数据。
+  // F2 修复：listener 单点持有 —— mitmStore 内部不再注册自己的 visibilitychange
+  // listener，避免两个 listener 各自节流（2.5s vs 1.2s）造成重复 fetch。
   let lastFocusRefresh = 0;
   const onVisibilityChange = () => {
     if (
@@ -173,7 +187,7 @@ onMounted(async () => {
     }
     lastFocusRefresh = now;
     void accounts.fetchAccounts();
-    void mitmStore.fetchStatus();
+    mitmStore.notifyVisibleAgain();
   };
   document.addEventListener("visibilitychange", onVisibilityChange);
   unVisibilityRefresh = () =>
@@ -197,7 +211,7 @@ onUnmounted(() => {
     <template v-if="!shellReady">
       <div class="flex-1 min-h-0 p-4">
         <div
-          class="h-full rounded-[28px] backdrop-blur-2xl border border-black/[0.05] bg-white/72 dark:border-white/[0.08] dark:bg-[#1C1C1E]/82"
+          class="h-full rounded-ios-card backdrop-blur-2xl border border-black/[0.05] bg-white/72 dark:border-white/[0.08] dark:bg-[#1C1C1E]/82"
         />
       </div>
     </template>
@@ -222,7 +236,10 @@ onUnmounted(() => {
                 class="flex-1 min-h-0 flex flex-col ios-view-surface"
                 :aria-hidden="mainView.activeTab === view.key ? 'false' : 'true'"
               >
-                <Suspense>
+                <DashboardView v-if="view.key === 'Dashboard'" />
+                <AccountsView v-else-if="view.key === 'Accounts'" />
+                <SettingsView v-else-if="view.key === 'Settings'" />
+                <Suspense v-else>
                   <component :is="view.component" />
                   <template #fallback>
                     <PageLoadingSkeleton :variant="view.skeleton" class="flex-1" />

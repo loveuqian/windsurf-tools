@@ -2,10 +2,7 @@
 
 package main
 
-import (
-	"github.com/getlantern/systray"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
-)
+import "github.com/getlantern/systray"
 
 // startTray 在后台线程运行系统托盘（当前仅 Windows 发布包启用）。
 func (a *App) startTray() {
@@ -30,10 +27,11 @@ func (a *App) onTrayReady() {
 			case <-mShow.ClickedCh:
 				a.activateExistingWindow()
 			case <-mQuit.ClickedCh:
+				// 关键：必须先标记 shuttingDown 再 runtime.Quit，否则 onBeforeClose
+				// 看到 MinimizeToTray=true 会隐藏窗口阻止关闭，进程永不退出，
+				// hosts/CA/Codeium 配置永远残留。requestExit 把这一步打包好。
 				systray.Quit()
-				if a.ctx != nil {
-					runtime.Quit(a.ctx)
-				}
+				a.requestExit()
 				return
 			}
 		}

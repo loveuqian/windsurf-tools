@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"windsurf-tools-wails/backend/app/pin"
 	"windsurf-tools-wails/backend/models"
 	"windsurf-tools-wails/backend/store"
 )
@@ -14,6 +15,7 @@ func newPinTestApp(t *testing.T) *App {
 		t.Fatalf("NewStoreInPaths() error = %v", err)
 	}
 	app := &App{store: s}
+	app.pinMod = pin.New(app.store, nil)
 	return app
 }
 

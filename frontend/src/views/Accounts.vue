@@ -4,9 +4,15 @@ import { useAccountStore } from "../stores/useAccountStore";
 import { useMainViewStore } from "../stores/useMainViewStore";
 import { useMitmStatusStore } from "../stores/useMitmStatusStore";
 import { useSettingsStore } from "../stores/useSettingsStore";
+// F7-REMOVAL: F7Banner / useSmartFriend 仅在 F7 模式下生效，发布前一并删除
+import F7Banner from "../components/F7Banner.vue";
+import { useSmartFriend } from "../composables/useSmartFriend";
 import ImportModal from "../components/accounts/ImportModal.vue";
 import AccountCardSkeleton from "../components/accounts/AccountCardSkeleton.vue";
 import ISelectSheet from "../components/ios/ISelectSheet.vue";
+import IDropdownMenu, {
+  type DropdownItem,
+} from "../components/ios/IDropdownMenu.vue";
 import {
   ArrowRightLeft,
   Plus,
@@ -24,6 +30,10 @@ import {
   Clock,
   Download,
   LogIn,
+  MoreHorizontal,
+  ShieldCheck,
+  Sparkles,
+  Lock,
 } from "lucide-vue-next";
 import { APIInfo } from "../api/wails";
 import {
@@ -37,7 +47,7 @@ import {
 } from "../utils/settingsModel";
 import { models } from "../../wailsjs/go/models";
 import PageLoadingSkeleton from "../components/common/PageLoadingSkeleton.vue";
-import { confirmDialog, showToast } from "../utils/toast";
+import { confirmDialog, showToast, showErrorToast } from "../utils/toast";
 import {
   formatDateTimeAsiaShanghai,
   formatResetCountdownZH,
@@ -268,7 +278,7 @@ const handleDelete = async (id: string) => {
     await accountStore.deleteAccount(id);
     showToast("账号已移除", "success");
   } catch (e: unknown) {
-    showToast(`移除失败: ${String(e)}`, "error");
+    showErrorToast(e, "移除失败");
   }
 };
 
@@ -277,7 +287,7 @@ const handleCleanExpired = async () => {
     const n = await accountStore.cleanExpiredAccounts();
     showToast(`已清理 ${n} 个过期账号`, "success");
   } catch (e: unknown) {
-    showToast(`清理失败: ${String(e)}`, "error");
+    showErrorToast(e, "清理失败");
   }
 };
 
@@ -298,7 +308,7 @@ const handleDeleteFreePlans = async () => {
     const deleted = await accountStore.deleteFreePlanAccounts();
     showToast(`已删除 ${deleted} 个免费账号`, "success");
   } catch (e: unknown) {
-    showToast(`删除失败: ${String(e)}`, "error");
+    showErrorToast(e, "删除失败");
   }
 };
 
@@ -310,7 +320,7 @@ const handleRefreshTokens = async () => {
     const ok = entries.filter(([, v]) => String(v).includes("成功")).length;
     showToast(`刷新完成：${ok} / ${entries.length}`, "success");
   } catch (e: unknown) {
-    showToast(`刷新失败: ${String(e)}`, "error");
+    showErrorToast(e, "刷新失败");
   }
 };
 
@@ -327,7 +337,7 @@ const handleRefreshAllQuotas = async () => {
       "success",
     );
   } catch (e: unknown) {
-    showToast(`同步额度失败: ${String(e)}`, "error");
+    showErrorToast(e, "同步额度失败");
   }
 };
 
@@ -336,7 +346,7 @@ const handleSwitchNextSeat = async () => {
     const target = await mitmStore.switchToNext();
     showToast(`MITM 已切到下一席位：${target || "已切换"}`, "success");
   } catch (e: unknown) {
-    showToast(`手动切换失败: ${String(e)}`, "error");
+    showErrorToast(e, "手动切换失败");
   }
 };
 
@@ -353,7 +363,7 @@ const handleRefreshOneQuota = async (id: string, email: string) => {
     await mitmStore.fetchStatus(true);
     showToast(`${email} 额度已更新`, "success");
   } catch (e: unknown) {
-    showToast(`刷新额度失败: ${String(e)}`, "error");
+    showErrorToast(e, "刷新额度失败");
   } finally {
     const done = new Set(quotaRefreshingIds.value);
     done.delete(id);
@@ -370,7 +380,7 @@ const handleSwitchMitmToAccount = async (acc: models.Account) => {
     await accountStore.fetchAccounts(true);
     showToast(`MITM 已切到：${target || acc.email || "目标账号"}`, "success");
   } catch (e: unknown) {
-    showToast(`切换到该账号失败: ${String(e)}`, "error");
+    showErrorToast(e, "切换到该账号失败");
   }
 };
 
@@ -380,7 +390,7 @@ const handleLoginToWindsurf = async (acc: models.Account) => {
     await accountStore.fetchAccounts(true);
     showToast(`已写入 Windsurf 本地登录态：${target || acc.email || "目标账号"}`, "success");
   } catch (e: unknown) {
-    showToast(`写入 Windsurf 登录态失败: ${String(e)}`, "error");
+    showErrorToast(e, "写入 Windsurf 登录态失败");
   }
 };
 
@@ -411,7 +421,7 @@ const handleUnpinFromCard = async () => {
     await settingsStore.fetchSettings(true);
     showToast("已解锁，自动切换已恢复", "success");
   } catch (e: unknown) {
-    showToast(`解锁失败: ${String(e)}`, "error");
+    showErrorToast(e, "解锁失败");
   }
 };
 
@@ -437,7 +447,7 @@ const handleTogglePoolMember = async (acc: models.Account) => {
       "success",
     );
   } catch (e: unknown) {
-    showToast(`修改池成员失败: ${String(e)}`, "error");
+    showErrorToast(e, "修改池成员失败");
   }
 };
 
@@ -452,7 +462,7 @@ const handleCopyApiKey = async (acc: models.Account) => {
     const short = key.length > 16 ? key.slice(0, 12) + "…" + key.slice(-4) : key;
     showToast(`已复制 ${short}`, "success");
   } catch (e) {
-    showToast(`复制失败: ${String(e)}`, "error");
+    showErrorToast(e, "复制失败");
   }
 };
 
@@ -510,7 +520,7 @@ const handleDeleteByPlanGroup = async () => {
     planGroupFilter.value = "";
     showToast(`已删除 ${n} 个「${label}」账号`, "success");
   } catch (e: unknown) {
-    showToast(`删除失败: ${String(e)}`, "error");
+    showErrorToast(e, "删除失败");
   }
 };
 
@@ -589,13 +599,22 @@ const shouldShowUsernameMeta = (acc: models.Account) => {
 const getAccountRemark = (acc: models.Account) =>
   String(acc.remark || "").trim();
 
+// F7-REMOVAL: 整段 sfState 与下方所有 sfState.active.value / sfState.* 调用一并删除
+const sfState = useSmartFriend();
+
 const getQuotaColor = (str: string) => {
+  // F7-REMOVAL: 下一行 sfState.active.value 分支删除
+  if (sfState.active.value) return "bg-ios-green";
   const n = parseFloat(String(str).replace("%", "").trim());
   if (!Number.isFinite(n)) return "bg-gray-400";
   if (n > 50) return "bg-ios-green";
   if (n > 20) return "bg-yellow-500";
   return "bg-ios-red";
 };
+
+// F7-REMOVAL: !sfState.active.value && 分支删除
+const isWeeklyBlockedDisplay = (acc: models.Account) =>
+  !sfState.active.value && isWeeklyQuotaBlocked(acc);
 
 const isExpiredAccount = (acc: models.Account) => {
   const status = String(acc.status || "").toLowerCase();
@@ -649,9 +668,12 @@ type CardStateTone = "online" | "ready" | "warning" | "danger" | "pending";
 const getCardStateMeta = (
   acc: models.Account,
 ): { tone: CardStateTone; label: string } => {
-  // 1. 运行时见底（MITM 代理标记的实时额度耗尽）优先
+  // F7-REMOVAL: 本函数内 sf 局部变量与所有 sf 分支删除后，逻辑自动变为「严格按额度判定」
+  const sf = sfState.active.value;
+
+  // 1. 运行时见底(MITM 代理标记的实时额度耗尽) — F7 时跳过
   const mitmRuntime = findMitmPoolRuntime(acc);
-  if (mitmRuntime?.runtime_exhausted) {
+  if (!sf && mitmRuntime?.runtime_exhausted) {
     return {
       tone: "danger",
       label: isCurrentOnline(acc) ? "当前活跃 · 运行时见底" : "运行时见底",
@@ -662,11 +684,11 @@ const getCardStateMeta = (
   if (isCurrentOnline(acc)) {
     return {
       tone: "online",
-      label: "当前活跃",
+      label: sf ? "当前活跃 · F7" : "当前活跃",
     };
   }
 
-  // 3. 已过期
+  // 3. 已过期(状态/订阅时间) — 跟额度无关，F7 也照常显示
   if (isExpiredAccount(acc)) {
     return {
       tone: "danger",
@@ -674,7 +696,6 @@ const getCardStateMeta = (
     };
   }
 
-  // 4. 额度检查（需要有 API Key 且有同步过额度数据才有意义）
   const daily = parseFloat(
     String(acc.daily_remaining || "")
       .replace("%", "")
@@ -687,31 +708,24 @@ const getCardStateMeta = (
   );
   const dailyKnown = Number.isFinite(daily);
   const weeklyKnown = Number.isFinite(weekly);
-  const weeklyBlocked = isWeeklyQuotaBlocked(acc);
-  const exhausted = isQuotaDepleted(acc);
-  const lowQuota =
-    (dailyKnown && daily > 0 && daily < 20) ||
-    (weeklyKnown && weekly > 0 && weekly < 20);
 
-  if (weeklyBlocked) {
-    return {
-      tone: "danger",
-      label: "周限不可用",
-    };
-  }
+  // 4. 额度检查 — F7 模式直接跳过，按 ready 显示
+  if (!sf) {
+    const weeklyBlocked = isWeeklyQuotaBlocked(acc);
+    const exhausted = isQuotaDepleted(acc);
+    const lowQuota =
+      (dailyKnown && daily > 0 && daily < 20) ||
+      (weeklyKnown && weekly > 0 && weekly < 20);
 
-  if (exhausted) {
-    return {
-      tone: "danger",
-      label: "额度见底",
-    };
-  }
-
-  if (lowQuota) {
-    return {
-      tone: "warning",
-      label: "额度偏低",
-    };
+    if (weeklyBlocked) {
+      return { tone: "danger", label: "周限不可用" };
+    }
+    if (exhausted) {
+      return { tone: "danger", label: "额度见底" };
+    }
+    if (lowQuota) {
+      return { tone: "warning", label: "额度偏低" };
+    }
   }
 
   // 5. 从未同步过额度且没有 API Key → 待补
@@ -735,10 +749,10 @@ const getCardStateMeta = (
     };
   }
 
-  // 7. 一切正常
+  // 7. 一切正常(F7 时也走这里)
   return {
     tone: "ready",
-    label: "可参与轮换",
+    label: sf ? "F7 · 已绕过额度" : "可参与轮换",
   };
 };
 
@@ -773,9 +787,14 @@ const matchesQuickFilter = (
     case "switchable":
       return meta.tone === "online" || meta.tone === "ready";
     case "depleted":
-      return meta.tone === "danger";
+      // F7-REMOVAL: !sfState.active.value && 分支删除
+      return !sfState.active.value && meta.tone === "danger";
     case "runtime_exhausted":
-      return Boolean(findMitmPoolRuntime(acc)?.runtime_exhausted);
+      return (
+        // F7-REMOVAL: !sfState.active.value && 分支删除
+        !sfState.active.value &&
+        Boolean(findMitmPoolRuntime(acc)?.runtime_exhausted)
+      );
     case "low":
       return meta.tone === "warning";
     case "pending":
@@ -806,10 +825,14 @@ const quickFilterOptions = computed<
   };
   for (const acc of accountStore.accounts) {
     const meta = getCardStateMeta(acc);
-    const runtimeExhausted = Boolean(findMitmPoolRuntime(acc)?.runtime_exhausted);
+    // F7-REMOVAL: !sfState.active.value && 分支删除
+    const runtimeExhausted =
+      !sfState.active.value &&
+      Boolean(findMitmPoolRuntime(acc)?.runtime_exhausted);
     if (meta.tone === "online") counts.online++;
     if (meta.tone === "online" || meta.tone === "ready") counts.switchable++;
-    if (meta.tone === "danger") counts.depleted++;
+    // F7-REMOVAL: !sfState.active.value && 分支删除
+    if (!sfState.active.value && meta.tone === "danger") counts.depleted++;
     if (runtimeExhausted) counts.runtime_exhausted++;
     if (meta.tone === "warning") counts.low++;
     if (meta.tone === "pending") counts.pending++;
@@ -866,45 +889,146 @@ const getPlanAccentClass = (acc: models.Account) => {
       return "from-gray-400 via-gray-300 to-gray-200";
   }
 };
+
+// ── 顶部工具栏「更多」菜单 ──
+// 把批量管理类的次要操作(全量刷新 / 同步 / 清理)收进 dropdown，
+// 保持顶部只露出最常用的「批量导入」「下一席位」+ 主筛选条。
+const bulkActionItems = computed<DropdownItem[]>(() => [
+  {
+    label: "刷新所有凭证",
+    icon: KeyRound,
+    onClick: () => void handleRefreshTokens(),
+    disabled: accountStore.actionLoading || accountStore.accounts.length === 0,
+    hint: "JWT",
+  },
+  {
+    label: "同步所有额度",
+    icon: BarChart3,
+    onClick: () => void handleRefreshAllQuotas(),
+    disabled: accountStore.actionLoading || accountStore.accounts.length === 0,
+    hint: "Quota",
+  },
+  { type: "divider" },
+  {
+    label: "清理过期账号",
+    icon: Trash2,
+    onClick: () => void handleCleanExpired(),
+    disabled: accountStore.accounts.length === 0,
+  },
+  {
+    label: `删除免费账号${freePlanAccountCount.value ? ` (${freePlanAccountCount.value})` : ""}`,
+    icon: UserX,
+    onClick: () => void handleDeleteFreePlans(),
+    danger: true,
+    disabled: freePlanAccountCount.value === 0,
+  },
+]);
+
+// ── 账号卡片「更多」菜单 ──
+// 一张卡片以前堆 5-7 个无文字小图标，新手分不清。
+// 现在主操作(写入登录态 / 切到 MITM)露出，其余收到这个菜单里。
+const accountCardMenuItems = (acc: models.Account): DropdownItem[] => {
+  const items: DropdownItem[] = [
+    {
+      label: "刷新此账号额度",
+      icon: RefreshCcw,
+      onClick: () => void handleRefreshOneQuota(acc.id, acc.email),
+      disabled: isAccountCardRefreshing(acc.id) || isAccountSwitching(acc.id),
+    },
+  ];
+  if (hasApiKey(acc)) {
+    items.push({
+      label: "复制 API Key",
+      icon: KeyRound,
+      onClick: () => void handleCopyApiKey(acc),
+    });
+  }
+  if (rotationPoolActive()) {
+    items.push({
+      label: isAccountInRotationPool(acc) ? "移出轮换池" : "加入轮换池",
+      icon: Shuffle,
+      onClick: () => void handleTogglePoolMember(acc),
+    });
+  }
+  if (isAccountPinned(acc)) {
+    items.push({
+      label: "解除锁定",
+      icon: Lock,
+      onClick: () => void handleUnpinFromCard(),
+      hint: "Pin",
+    });
+  }
+  items.push({ type: "divider" });
+  items.push({
+    label: "移除此账号",
+    icon: Trash2,
+    onClick: () => void handleDelete(acc.id),
+    danger: true,
+    disabled: isAccountSwitching(acc.id),
+  });
+  return items;
+};
+
+// 空状态：3 步引导卡片(可点击)
+const handleStepImport = () => {
+  showImportModal.value = true;
+};
+const handleStepEnableMitm = () => {
+  mainView.activeTab = "Dashboard";
+};
+const handleStepFinish = () => {
+  mainView.activeTab = "Dashboard";
+};
 </script>
 
 <template>
-  <div class="p-6 md:p-8 flex flex-col max-w-6xl mx-auto w-full min-h-0">
+  <div class="p-6 md:p-8 flex flex-1 flex-col max-w-6xl mx-auto w-full min-h-0">
+    <!-- ────────── 顶部工具栏(精简版) ──────────
+         主操作只露出「批量导入」「下一席位」+「⋯ 更多」折叠菜单。
+         旧版 5 个按钮 + 按套餐组件挤一行的 UI 改成单行结构清晰的工具栏。 -->
     <div
-      class="flex flex-wrap items-center justify-between gap-4 mb-4 shrink-0"
+      class="flex flex-wrap items-start justify-between gap-4 mb-5 shrink-0"
     >
-      <div class="flex items-center gap-4">
-        <div>
-          <h1 class="text-[32px] font-bold tracking-tight">
-            {{ PRIMARY_POOL_LABEL }}
-          </h1>
-          <p
-            class="text-[13px] text-ios-textSecondary dark:text-ios-textSecondaryDark mt-1"
-          >
-            只维护 API Key / JWT / 官方额度快照。当前活跃席位和运行时见底都以
-            MITM 代理现场状态为准。
-          </p>
-        </div>
+      <div class="min-w-0">
+        <h1 class="text-[28px] sm:text-[32px] font-bold tracking-tight">
+          {{ PRIMARY_POOL_LABEL }}
+        </h1>
+        <p
+          class="text-[13px] text-ios-textSecondary dark:text-ios-textSecondaryDark mt-1 leading-relaxed max-w-[640px]"
+        >
+          粘贴 API Key / JWT / 邮箱密码即可一键入池。导入完成后，MITM 代理会自动接管 IDE
+          流量并按额度无感切号。
+        </p>
+        <!-- F7-REMOVAL: 整行 <F7Banner/> 删除即可，状态条由组件控制显隐 -->
+        <F7Banner variant="compact" />
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2 justify-end">
+        <!-- 主操作 1：批量导入 -->
         <button
           type="button"
-          class="no-drag-region flex items-center px-5 py-2.5 bg-gradient-to-b from-[#3b82f6] to-ios-blue text-white rounded-full font-semibold text-[14px] ios-btn shadow-md ring-1 ring-black/5 whitespace-nowrap shrink-0"
+          class="no-drag-region inline-flex items-center gap-1.5 px-5 py-2.5 bg-gradient-to-b from-[#3b82f6] to-ios-blue text-white rounded-full font-semibold text-[14px] ios-btn shadow-md ring-1 ring-black/5 whitespace-nowrap"
           @click="showImportModal = true"
         >
-          <Plus class="w-[18px] h-[18px] mr-1" stroke-width="2.5" />
+          <Plus class="w-[18px] h-[18px]" stroke-width="2.5" />
           批量导入
         </button>
-      </div>
-      <div class="flex flex-wrap gap-2 justify-end items-center">
+        <!-- 主操作 2：手动切到下一席位(MITM 启动后才有意义) -->
         <button
           type="button"
-          class="no-drag-region flex items-center px-4 py-2 bg-ios-blue/10 text-ios-blue dark:text-blue-300 rounded-full font-semibold text-[14px] ios-btn hover:bg-ios-blue/15 transition-colors disabled:opacity-50"
+          class="no-drag-region inline-flex items-center gap-1.5 px-4 py-2.5 bg-ios-blue/10 text-ios-blue dark:text-blue-300 rounded-full font-semibold text-[14px] ios-btn hover:bg-ios-blue/15 transition-colors disabled:opacity-50"
           :disabled="
             mitmStore.switchLoading || !mitmStore.status?.pool_status?.length
+          "
+          :title="
+            mitmStore.status?.pool_status?.length
+              ? '手动切到 MITM 号池中下一席位'
+              : 'MITM 号池为空，先导入带 API Key 的账号'
           "
           @click="handleSwitchNextSeat"
         >
           <ArrowRightLeft
-            class="w-[18px] h-[18px] mr-1.5"
+            class="w-[18px] h-[18px]"
             :class="
               mitmStore.switchLoading && !mitmStore.switchTargetAccountId
                 ? 'animate-pulse'
@@ -914,73 +1038,16 @@ const getPlanAccentClass = (acc: models.Account) => {
           />
           下一席位
         </button>
-        <button
-          type="button"
-          class="no-drag-region flex items-center px-4 py-2 bg-black/5 dark:bg-white/10 text-ios-text dark:text-ios-textDark rounded-full font-semibold text-[14px] ios-btn hover:bg-black/10 dark:hover:bg-white/15 transition-colors disabled:opacity-50"
-          :disabled="accountStore.actionLoading"
-          @click="handleRefreshTokens"
-        >
-          <KeyRound class="w-[18px] h-[18px] mr-1.5" stroke-width="2.5" />
-          刷新凭证
-        </button>
-        <button
-          type="button"
-          class="no-drag-region flex items-center px-4 py-2 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 rounded-full font-semibold text-[14px] ios-btn hover:bg-emerald-500/15 transition-colors disabled:opacity-50"
-          :disabled="accountStore.actionLoading"
-          @click="handleRefreshAllQuotas"
-        >
-          <BarChart3 class="w-[18px] h-[18px] mr-1.5" stroke-width="2.5" />
-          同步额度
-        </button>
-        <button
-          type="button"
-          class="no-drag-region flex items-center px-4 py-2 bg-ios-red/10 text-ios-red dark:text-ios-redDark rounded-full font-semibold text-[14px] ios-btn hover:bg-ios-red/20 transition-colors"
-          @click="handleCleanExpired"
-        >
-          <Trash2 class="w-[18px] h-[18px] mr-1.5" stroke-width="2.5" />
-          清理过期
-        </button>
-        <button
-          type="button"
-          class="no-drag-region flex items-center px-4 py-2 bg-amber-500/12 text-amber-900 dark:text-amber-300 rounded-full font-semibold text-[14px] ios-btn hover:bg-amber-500/18 transition-colors disabled:opacity-50"
-          @click="handleDeleteFreePlans"
-        >
-          <UserX class="w-[18px] h-[18px] mr-1.5" stroke-width="2.5" />
-          删除免费
-        </button>
-
-        <!-- 按套餐分组操作 -->
-        <div
-          class="flex items-center gap-1.5 ml-1 pl-2 border-l border-black/10 dark:border-white/10"
-        >
-          <ISelectSheet
-            v-model="planGroupFilter"
-            :options="(planGroupOptions as any)"
-            title="选择套餐类型"
-            width="w-44"
-          />
-          <template v-if="planGroupFilter">
-            <button
-              type="button"
-              class="no-drag-region flex items-center px-3 py-2 bg-ios-red/10 text-ios-red rounded-full font-semibold text-[12px] ios-btn hover:bg-ios-red/20 transition-colors"
-              :title="`删除所有「${PLAN_TONE_LABELS[planGroupFilter] ?? planGroupFilter}」账号`"
-              @click="handleDeleteByPlanGroup"
-            >
-              <Trash2 class="w-[14px] h-[14px] mr-1" stroke-width="2.5" />
-              删除该组
-            </button>
-            <button
-              type="button"
-              class="no-drag-region flex items-center px-3 py-2 bg-violet-500/10 text-violet-700 dark:text-violet-300 rounded-full font-semibold text-[12px] ios-btn hover:bg-violet-500/20 transition-colors"
-              :title="`导出「${PLAN_TONE_LABELS[planGroupFilter] ?? planGroupFilter}」账号到剪贴板`"
-              @click="handleExportByPlanGroup"
-            >
-              <Download class="w-[14px] h-[14px] mr-1" stroke-width="2.5" />
-              导出该组
-            </button>
-          </template>
-        </div>
-
+        <!-- 次要操作折叠菜单：刷新凭证 / 同步额度 / 清理过期 / 删除免费 -->
+        <IDropdownMenu
+          :items="bulkActionItems"
+          align="right"
+          width="w-60"
+          trigger-label="批量管理"
+          :trigger-icon="MoreHorizontal"
+          :disabled="accountStore.accounts.length === 0"
+          trigger-title="批量管理：全量刷新 / 同步 / 清理"
+        />
       </div>
     </div>
 
@@ -1046,9 +1113,9 @@ const getPlanAccentClass = (acc: models.Account) => {
 
     <div
       v-if="accountStore.accounts.length > 0"
-      class="flex flex-col sm:flex-row gap-3 mb-6 shrink-0 max-w-6xl"
+      class="flex flex-col sm:flex-row sm:flex-wrap gap-3 mb-6 shrink-0 max-w-6xl"
     >
-      <div class="relative flex-1 min-w-0">
+      <div class="relative flex-1 min-w-[220px]">
         <Search
           class="absolute left-3.5 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-ios-textSecondary opacity-60 pointer-events-none"
         />
@@ -1073,64 +1140,169 @@ const getPlanAccentClass = (acc: models.Account) => {
         title="账号排序方式"
         width="w-44"
       />
+      <!-- ── 按套餐分组操作(高级)：仅在有账号时显示，整体宽度自适应 ──
+           选定套餐后才出现「删除该组 / 导出该组」二级按钮，避免误触。 -->
+      <div
+        class="flex items-center gap-1.5 sm:ml-auto"
+        title="先选套餐类型，再按删除 / 导出该组"
+      >
+        <ISelectSheet
+          v-model="planGroupFilter"
+          :options="(planGroupOptions as any)"
+          title="选择套餐类型"
+          width="w-44"
+        />
+        <template v-if="planGroupFilter">
+          <button
+            type="button"
+            class="no-drag-region inline-flex items-center gap-1 px-3 py-2 bg-ios-red/10 text-ios-red rounded-full font-semibold text-[12px] ios-btn hover:bg-ios-red/20 transition-colors"
+            :title="`删除所有「${PLAN_TONE_LABELS[planGroupFilter] ?? planGroupFilter}」账号`"
+            @click="handleDeleteByPlanGroup"
+          >
+            <Trash2 class="w-[14px] h-[14px]" stroke-width="2.5" />
+            删除该组
+          </button>
+          <button
+            type="button"
+            class="no-drag-region inline-flex items-center gap-1 px-3 py-2 bg-violet-500/10 text-violet-700 dark:text-violet-300 rounded-full font-semibold text-[12px] ios-btn hover:bg-violet-500/20 transition-colors"
+            :title="`导出「${PLAN_TONE_LABELS[planGroupFilter] ?? planGroupFilter}」账号`"
+            @click="handleExportByPlanGroup"
+          >
+            <Download class="w-[14px] h-[14px]" stroke-width="2.5" />
+            导出该组
+          </button>
+        </template>
+      </div>
     </div>
 
+    <!-- 只有「从未成功拉过 + 当前确实空」时才整屏骨架。
+         过去用 isLoading 做闸门，会被并发 fetch / 异常吞掉的回滚 race 卡住，
+         结果 sidebar 已显示号池 13，主区还是 6 个骨架卡片。
+         改成 `!hasLoadedOnce && length===0`：只要 store 曾完整跑完一次（不管成败），
+         就**永不再走骨架屏分支**，length>0 直接渲染卡片，length===0 走空状态 CTA。 -->
     <PageLoadingSkeleton
-      v-if="accountStore.isLoading"
+      v-if="!accountStore.hasLoadedOnce && accountStore.accounts.length === 0"
       variant="accounts"
       class="flex-1"
     />
 
+    <!-- ────────── 空状态：3 步上手 ──────────
+         首次进入号池时显示。每个步骤是一个 button — 点击直接执行/跳转。
+         步骤 1(导入)是行动核心，用主色按钮强调；2/3 是次操作。
+         降低新手「不知道下一步该干嘛」的认知成本。 -->
     <div
       v-else-if="accountStore.accounts.length === 0"
-      class="flex flex-col items-center justify-center flex-1 text-ios-textSecondary py-12"
+      class="flex flex-col items-center justify-center flex-1 text-ios-textSecondary py-12 ios-page-enter"
     >
-      <!-- 大型亲切 icon 组合 -->
       <div class="relative mb-8">
-        <div class="w-32 h-32 rounded-[32px] bg-gradient-to-br from-ios-blue/15 to-violet-500/15 dark:from-ios-blue/25 dark:to-violet-500/25 flex items-center justify-center shadow-[0_12px_32px_rgba(37,99,235,0.12)]">
-          <Users class="w-14 h-14 text-ios-blue dark:text-blue-300" stroke-width="1.8" />
+        <div
+          class="w-32 h-32 rounded-[32px] bg-gradient-to-br from-ios-blue/15 to-violet-500/15 dark:from-ios-blue/25 dark:to-violet-500/25 flex items-center justify-center shadow-[0_12px_32px_rgba(37,99,235,0.12)]"
+        >
+          <Users
+            class="w-14 h-14 text-ios-blue dark:text-blue-300"
+            stroke-width="1.8"
+          />
         </div>
-        <div class="absolute -bottom-2 -right-2 w-12 h-12 rounded-2xl bg-white dark:bg-[#1C1C1E] flex items-center justify-center shadow-md ring-2 ring-white/80 dark:ring-black/80">
-          <Plus class="w-7 h-7 text-emerald-500" stroke-width="2.6" />
+        <div
+          class="absolute -bottom-2 -right-2 w-12 h-12 rounded-2xl bg-white dark:bg-[#1C1C1E] flex items-center justify-center shadow-md ring-2 ring-white/80 dark:ring-black/80"
+        >
+          <Sparkles class="w-7 h-7 text-emerald-500" stroke-width="2.4" />
         </div>
       </div>
 
-      <h2 class="text-[24px] font-bold text-ios-text dark:text-ios-textDark mb-2">
-        {{ emptyStateTitle }}
+      <h2
+        class="text-[24px] font-bold text-ios-text dark:text-ios-textDark mb-2 text-center"
+      >
+        三步开始无感切号
       </h2>
-      <p class="max-w-[440px] text-center text-[14px] leading-relaxed text-ios-textSecondary dark:text-ios-textSecondaryDark mb-8">
-        {{ emptyStateBody }}
+      <p
+        class="max-w-[480px] text-center text-[14px] leading-relaxed text-ios-textSecondary dark:text-ios-textSecondaryDark mb-8 px-4"
+      >
+        把账号导入号池，Windsurf Tools 会接管 Cascade 流量并按额度自动切号 ——
+        无需修改 IDE，不打断对话。
       </p>
 
-      <!-- 3 步引导卡片 -->
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 max-w-[780px] w-full px-4 mb-8">
-        <div class="rounded-[20px] border border-black/[0.05] dark:border-white/[0.08] bg-white/70 dark:bg-white/[0.04] p-4 flex flex-col items-start gap-2">
-          <div class="flex items-center gap-2">
-            <div class="w-7 h-7 rounded-full bg-ios-blue/15 text-ios-blue flex items-center justify-center text-[13px] font-black">1</div>
-            <span class="text-[14px] font-bold text-ios-text dark:text-ios-textDark">批量导入</span>
+      <!-- 3 步可点击卡片 -->
+      <div
+        class="grid grid-cols-1 md:grid-cols-3 gap-3 max-w-[820px] w-full px-4 mb-7"
+      >
+        <button
+          type="button"
+          class="no-drag-region group relative rounded-[22px] border border-ios-blue/25 bg-gradient-to-br from-ios-blue/[0.08] to-violet-500/[0.06] dark:from-ios-blue/[0.18] dark:to-violet-500/[0.12] p-5 text-left ios-btn shadow-[0_10px_24px_-12px_rgba(37,99,235,0.4)] hover:-translate-y-0.5 hover:shadow-[0_16px_30px_-12px_rgba(37,99,235,0.4)] transition-all"
+          @click="handleStepImport"
+        >
+          <div class="flex items-center gap-2.5 mb-2">
+            <div
+              class="w-8 h-8 rounded-full bg-ios-blue text-white flex items-center justify-center text-[14px] font-black shadow-md shadow-ios-blue/40"
+            >
+              1
+            </div>
+            <span class="text-[15px] font-bold text-ios-text dark:text-ios-textDark">
+              批量导入
+            </span>
+          </div>
+          <p class="text-[12px] text-gray-600 dark:text-gray-300 leading-relaxed">
+            粘贴 API Key / JWT / 邮箱密码 / Refresh Token，自动识别格式并入池。
+          </p>
+          <div
+            class="mt-3 inline-flex items-center gap-1 text-[12px] font-bold text-ios-blue group-hover:gap-1.5 transition-all"
+          >
+            点击开始
+            <ChevronRight class="h-3.5 w-3.5" stroke-width="2.5" />
+          </div>
+        </button>
+
+        <button
+          type="button"
+          class="no-drag-region group relative rounded-[22px] border border-violet-500/20 bg-white/70 dark:bg-white/[0.04] p-5 text-left ios-btn hover:-translate-y-0.5 hover:bg-violet-500/[0.04] hover:border-violet-500/30 transition-all"
+          @click="handleStepEnableMitm"
+        >
+          <div class="flex items-center gap-2.5 mb-2">
+            <div
+              class="w-8 h-8 rounded-full bg-violet-500/15 text-violet-600 dark:text-violet-300 flex items-center justify-center text-[14px] font-black"
+            >
+              2
+            </div>
+            <span class="text-[15px] font-bold text-ios-text dark:text-ios-textDark">
+              启用 MITM 代理
+            </span>
           </div>
           <p class="text-[12px] text-gray-500 dark:text-gray-400 leading-relaxed">
-            粘贴 API Key / JWT / 邮箱密码 / Refresh Token，自动识别类型并入池。
+            到总览页一键完成 CA 证书 + Hosts 配置，打开代理后号池立即接管 IDE 流量。
           </p>
-        </div>
-        <div class="rounded-[20px] border border-black/[0.05] dark:border-white/[0.08] bg-white/70 dark:bg-white/[0.04] p-4 flex flex-col items-start gap-2">
-          <div class="flex items-center gap-2">
-            <div class="w-7 h-7 rounded-full bg-violet-500/15 text-violet-600 dark:text-violet-300 flex items-center justify-center text-[13px] font-black">2</div>
-            <span class="text-[14px] font-bold text-ios-text dark:text-ios-textDark">启用 MITM</span>
+          <div
+            class="mt-3 inline-flex items-center gap-1 text-[12px] font-bold text-violet-600 dark:text-violet-300 group-hover:gap-1.5 transition-all"
+          >
+            前往总览
+            <ChevronRight class="h-3.5 w-3.5" stroke-width="2.5" />
           </div>
-          <p class="text-[12px] text-gray-500 dark:text-gray-400 leading-relaxed">
-            在 Dashboard 完成证书 + hosts 配置后打开 MITM，号池立即接管 IDE 流量。
-          </p>
-        </div>
-        <div class="rounded-[20px] border border-black/[0.05] dark:border-white/[0.08] bg-white/70 dark:bg-white/[0.04] p-4 flex flex-col items-start gap-2">
-          <div class="flex items-center gap-2">
-            <div class="w-7 h-7 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 flex items-center justify-center text-[13px] font-black">3</div>
-            <span class="text-[14px] font-bold text-ios-text dark:text-ios-textDark">开始使用</span>
+        </button>
+
+        <button
+          type="button"
+          class="no-drag-region group relative rounded-[22px] border border-emerald-500/20 bg-white/70 dark:bg-white/[0.04] p-5 text-left ios-btn hover:-translate-y-0.5 hover:bg-emerald-500/[0.04] hover:border-emerald-500/30 transition-all"
+          @click="handleStepFinish"
+        >
+          <div class="flex items-center gap-2.5 mb-2">
+            <div
+              class="w-8 h-8 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 flex items-center justify-center text-[14px] font-black"
+            >
+              3
+            </div>
+            <span class="text-[15px] font-bold text-ios-text dark:text-ios-textDark">
+              开始使用
+            </span>
           </div>
           <p class="text-[12px] text-gray-500 dark:text-gray-400 leading-relaxed">
             Cascade 对话自动按额度无感切号，可选启用轮换池 + Clash 加速。
           </p>
-        </div>
+          <div
+            class="mt-3 inline-flex items-center gap-1 text-[12px] font-bold text-emerald-600 dark:text-emerald-300 group-hover:gap-1.5 transition-all"
+          >
+            查看仪表盘
+            <ChevronRight class="h-3.5 w-3.5" stroke-width="2.5" />
+          </div>
+        </button>
       </div>
 
       <div class="flex flex-wrap items-center justify-center gap-2">
@@ -1140,7 +1312,7 @@ const getPlanAccentClass = (acc: models.Account) => {
           @click="showImportModal = true"
         >
           <Plus class="h-4 w-4" stroke-width="2.4" />
-          开始导入第一个账号
+          导入第一个账号
         </button>
         <button
           type="button"
@@ -1148,7 +1320,7 @@ const getPlanAccentClass = (acc: models.Account) => {
           @click="goRelay"
         >
           <ChevronRight class="h-4 w-4" stroke-width="2.4" />
-          打开 Relay
+          直连 OpenAI Relay
         </button>
       </div>
     </div>
@@ -1230,100 +1402,64 @@ const getPlanAccentClass = (acc: models.Account) => {
                   </span>
                 </div>
 
-                <div
-                  class="flex shrink-0 gap-1 rounded-full border border-black/5 bg-gray-50/95 p-1 shadow-sm dark:border-white/5 dark:bg-black/20"
-                >
+                <!-- ────────── 卡片操作区(精简) ──────────
+                     旧版 5-7 个圆形小图标无文字，新手分不清。改为：
+                       · 主操作 1：写入本地登录态(总是露出，文字+图标)
+                       · 主操作 2：切到 MITM(仅 hasApiKey 露出)
+                       · 「⋯ 更多」菜单：刷新额度 / 复制 Key / 池操作 / 解锁 / 删除
+                     与卡片右上角的徽章并排，节奏更清晰。 -->
+                <div class="flex shrink-0 items-center gap-1.5">
                   <button
                     type="button"
-                    class="flex h-[30px] w-[30px] min-w-[30px] items-center justify-center rounded-full bg-white text-violet-600 shadow-sm transition hover:scale-105 dark:bg-black/40 ios-btn"
+                    class="no-drag-region inline-flex items-center gap-1 rounded-full bg-violet-500/10 px-3 py-1.5 text-[12px] font-bold text-violet-600 dark:text-violet-300 shadow-sm transition-colors hover:bg-violet-500/15 ios-btn disabled:opacity-50"
                     :disabled="isAccountSwitching(acc.id)"
-                    title="写入本地 Windsurf 登录态"
+                    title="把这个账号写入 Windsurf 本地登录态(IDE 看到此账号登录)"
                     @click="handleLoginToWindsurf(acc)"
                   >
-                    <LogIn class="h-[15px] w-[15px]" stroke-width="2.5" />
+                    <LogIn class="h-[14px] w-[14px]" stroke-width="2.5" />
+                    登录
                   </button>
                   <button
+                    v-if="hasApiKey(acc)"
                     type="button"
-                    class="flex h-[30px] w-[30px] min-w-[30px] items-center justify-center rounded-full bg-white text-ios-blue shadow-sm transition hover:scale-105 dark:bg-black/40 ios-btn disabled:opacity-45"
+                    class="no-drag-region inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-[12px] font-bold shadow-sm transition-colors ios-btn disabled:opacity-45"
+                    :class="
+                      isCurrentOnline(acc)
+                        ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 cursor-default'
+                        : 'bg-ios-blue/10 text-ios-blue dark:text-blue-300 hover:bg-ios-blue/15'
+                    "
                     :disabled="
                       !hasApiKey(acc) ||
                       isCurrentOnline(acc) ||
                       mitmStore.switchLoading
                     "
-                    title="手动切到这个 MITM 账号"
+                    :title="
+                      isCurrentOnline(acc)
+                        ? '当前活跃席位'
+                        : '手动切到这个 MITM 账号'
+                    "
                     @click="handleSwitchMitmToAccount(acc)"
                   >
                     <ArrowRightLeft
-                      class="h-[15px] w-[15px]"
+                      v-if="!isCurrentOnline(acc)"
+                      class="h-[14px] w-[14px]"
                       :class="isAccountSwitching(acc.id) ? 'animate-pulse' : ''"
                       stroke-width="2.5"
                     />
-                  </button>
-                  <button
-                    type="button"
-                    class="flex h-[30px] w-[30px] min-w-[30px] items-center justify-center rounded-full bg-white text-emerald-600 shadow-sm transition hover:scale-105 dark:bg-black/40 ios-btn"
-                    :disabled="
-                      isAccountCardRefreshing(acc.id) ||
-                      isAccountSwitching(acc.id)
-                    "
-                    title="只刷新这张卡的额度与订阅信息"
-                    @click="handleRefreshOneQuota(acc.id, acc.email)"
-                  >
-                    <RefreshCcw class="h-[15px] w-[15px]" stroke-width="2.5" />
-                  </button>
-                  <!-- ★ v1.3.0 复制 API Key -->
-                  <button
-                    v-if="hasApiKey(acc)"
-                    type="button"
-                    class="flex h-[30px] w-[30px] min-w-[30px] items-center justify-center rounded-full bg-white text-gray-600 shadow-sm transition hover:scale-105 dark:bg-black/40 dark:text-gray-300 ios-btn"
-                    title="复制 sk-ws- API Key 到剪贴板"
-                    @click="handleCopyApiKey(acc)"
-                  >
-                    <KeyRound class="h-[15px] w-[15px]" stroke-width="2.5" />
-                  </button>
-                  <!-- ★ v1.3.0 池成员切换（仅池启用时显示） -->
-                  <button
-                    v-if="rotationPoolActive()"
-                    type="button"
-                    class="flex h-[30px] w-[30px] min-w-[30px] items-center justify-center rounded-full shadow-sm transition hover:scale-105 ios-btn"
-                    :class="
-                      isAccountInRotationPool(acc)
-                        ? 'bg-violet-500 text-white hover:bg-violet-600'
-                        : 'bg-white text-violet-600 dark:bg-black/40'
-                    "
-                    :title="
-                      isAccountInRotationPool(acc)
-                        ? '点击移出轮换池'
-                        : '点击加入轮换池（定时切 + 额度切只在池内）'
-                    "
-                    @click="handleTogglePoolMember(acc)"
-                  >
-                    <Shuffle
-                      v-if="!isAccountInRotationPool(acc)"
-                      class="h-[15px] w-[15px]"
+                    <ShieldCheck
+                      v-else
+                      class="h-[14px] w-[14px]"
                       stroke-width="2.5"
                     />
-                    <span v-else class="text-[14px] font-black">✓</span>
+                    {{ isCurrentOnline(acc) ? "活跃" : "切到此号" }}
                   </button>
-                  <!-- ★ v1.3.0 Pin 解锁（仅本卡 pin 时显示） -->
-                  <button
-                    v-if="isAccountPinned(acc)"
-                    type="button"
-                    class="flex h-[30px] w-[30px] min-w-[30px] items-center justify-center rounded-full bg-amber-500 text-white shadow-sm transition hover:scale-105 hover:bg-amber-600 ios-btn"
-                    title="解除锁定，恢复自动切换"
-                    @click="handleUnpinFromCard"
-                  >
-                    <span class="text-[12px] font-black">🔓</span>
-                  </button>
-                  <button
-                    type="button"
-                    class="flex h-[30px] w-[30px] min-w-[30px] items-center justify-center rounded-full bg-white text-ios-red shadow-sm transition hover:scale-105 dark:bg-black/40 ios-btn"
-                    :disabled="isAccountSwitching(acc.id)"
-                    title="移除账号"
-                    @click="handleDelete(acc.id)"
-                  >
-                    <Trash2 class="h-4 w-4" />
-                  </button>
+                  <IDropdownMenu
+                    :items="accountCardMenuItems(acc)"
+                    align="right"
+                    width="w-52"
+                    compact
+                    trigger-title="更多操作"
+                  />
                 </div>
               </div>
 
@@ -1449,7 +1585,7 @@ const getPlanAccentClass = (acc: models.Account) => {
                     <span>周额度</span>
                     <span>{{
                       acc.weekly_remaining ||
-                      (isWeeklyQuotaBlocked(acc) ? "官方缺失" : "—")
+                      (isWeeklyBlockedDisplay(acc) ? "官方缺失" : "—")
                     }}</span>
                   </div>
                   <div
@@ -1471,7 +1607,7 @@ const getPlanAccentClass = (acc: models.Account) => {
                     {{ formatResetCountdownZH(acc.weekly_reset_at) }}
                   </div>
                   <div
-                    v-if="isWeeklyQuotaBlocked(acc)"
+                    v-if="isWeeklyBlockedDisplay(acc)"
                     class="pt-1 text-[10px] font-semibold text-rose-600 dark:text-rose-300"
                   >
                     官方未返回周额度，按不可用处理

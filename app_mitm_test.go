@@ -43,7 +43,7 @@ func TestHandleMitmKeyAccessDeniedPersistsAccountStatusAndSkipsKey(t *testing.T)
 		if acc.Status != "disabled" {
 			t.Fatalf("Status = %q, want disabled", acc.Status)
 		}
-		keys := collectEligibleMitmAPIKeys(app.store.GetAllAccounts(), "all")
+		keys := collectEligibleMitmAPIKeys(app.store.GetAllAccounts(), "all", false)
 		if len(keys) != 1 || keys[0] != "sk-ws-b" {
 			t.Fatalf("eligible keys = %#v, want only sk-ws-b", keys)
 		}
@@ -62,7 +62,7 @@ func TestHandleMitmKeyAccessDeniedPersistsAccountStatusAndSkipsKey(t *testing.T)
 		if acc.PlanName != "Free" {
 			t.Fatalf("PlanName = %q, want Free", acc.PlanName)
 		}
-		keys := collectEligibleMitmAPIKeys(app.store.GetAllAccounts(), "all")
+		keys := collectEligibleMitmAPIKeys(app.store.GetAllAccounts(), "all", false)
 		if len(keys) != 1 || keys[0] != "sk-ws-b" {
 			t.Fatalf("eligible keys = %#v, want only sk-ws-b", keys)
 		}

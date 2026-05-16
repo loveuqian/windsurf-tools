@@ -5,7 +5,13 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
+	"windsurf-tools-wails/backend/app/clash"
+	"windsurf-tools-wails/backend/app/importsvc"
+	"windsurf-tools-wails/backend/app/notify"
+	"windsurf-tools-wails/backend/app/pin"
+	"windsurf-tools-wails/backend/models"
 	"windsurf-tools-wails/backend/services"
 	"windsurf-tools-wails/backend/store"
 	"windsurf-tools-wails/backend/utils"
@@ -19,9 +25,12 @@ type App struct {
 	windsurfSvc            *services.WindsurfService
 	mitmProxy              *services.MitmProxy
 	openaiRelay            *services.OpenAIRelay
-	clashRotator           *services.ClashRotator
 	rotationPool           *rotationPoolState
 	usageTracker           *services.UsageTracker
+	notifier               *notify.Module
+	pinMod                 *pin.Module
+	clashMod               *clash.Module
+	importMod              *importsvc.Module
 	cancelAutoRefresh      context.CancelFunc
 	cancelAutoQuotaRefresh context.CancelFunc
 	cancelQuotaHotPoll     context.CancelFunc
@@ -35,6 +44,12 @@ type App struct {
 	traySupportedFn        func() bool
 	// silentFromFlag 由 main 在解析到 --silent 时设置，与 settings.silent_start 二选一即可触发静默启动
 	silentFromFlag bool
+	// shuttingDown 在主动退出流程开始时被原子置 true。onBeforeClose 看到此标志
+	// 后跳过「隐藏到托盘」逻辑，确保托盘菜单「退出」/ runtime.Quit 真的能让进程关掉。
+	shuttingDown atomic.Bool
+	// cleanupOnce 保证整个进程生命周期里 TeardownMitm 只跑一次，
+	// 即便 onBeforeClose 与 OnShutdown 都触发也只是单次清理。
+	cleanupOnce sync.Once
 }
 
 func NewApp() *App { return &App{} }
@@ -52,66 +67,45 @@ func (a *App) initBackend() error {
 	// ── 调试日志 ──
 	settings := a.store.GetSettings()
 	utils.InitDebugLogger(s.DataDir(), settings.DebugLog)
+	// ── 桌面通知 ──
+	a.notifier = notify.New(func() bool {
+		if a.store == nil {
+			return false
+		}
+		return a.store.GetSettings().DesktopNotifications
+	})
+	// ── 手动 Pin ──
+	a.pinMod = pin.New(a.store, func(eventKey, title, body string) {
+		a.notify(NotifyKindInfo, eventKey, title, body)
+	})
 	// ── 创建跨服务的用量跟踪器 ──
 	a.usageTracker = services.NewUsageTracker(s.DataDir())
 
+	// ── MITM Proxy & OpenAI Relay（回调钩子统一在 wireProxyCallbacks 注册）──
 	a.mitmProxy = services.NewMitmProxy(a.windsurfSvc, func(msg string) {
 		utils.DLog("%s", msg)
 	}, "", a.usageTracker)
-	a.mitmProxy.SetOnKeyExhausted(func(apiKey string) {
-		utils.DLog("[回调] onKeyExhausted 触发: key=%s...", apiKey[:min(12, len(apiKey))])
-		accID := findAccountIDForMITMAPIKey(a.store.GetAllAccounts(), apiKey)
-		if accID == "" {
-			utils.DLog("[回调] onKeyExhausted: 在号池中未找到匹配 key，跳过")
-			return
-		}
-		utils.DLog("[回调] onKeyExhausted: 匹配到账号 id=%s，刷新额度...", accID[:min(8, len(accID))])
-		_ = a.RefreshAccountQuota(accID)
-		// ★ 立即触发切号（之前只刷额度不切号，导致 IDE 继续用耗尽账号）
-		s := a.store.GetSettings()
-		// Pin 优先：手动锁定时跳过所有自动切（用户 100% 控制）
-		if s.ManualPinEnabled {
-			utils.DLog("[回调] onKeyExhausted: ManualPin 生效 (pin=%s)，跳过自动切", s.ManualPinAccountID[:min(8, len(s.ManualPinAccountID))])
-			return
-		}
-		if s.AutoSwitchOnQuotaExhausted {
-			utils.DLog("[回调] onKeyExhausted: AutoSwitch=true → 立即MITM轮换")
-			if next, err := a.rotateMitmToNextAvailable(accID, s.AutoSwitchPlanFilter); err != nil {
-				utils.DLog("[回调] onKeyExhausted: MITM轮换失败: %v", err)
-				// 关键事件：额度耗尽 + 没切到下一个 → 用户需要立刻知道
-				a.notify(NotifyKindError, "rotate-failed",
-					"额度耗尽但无可用账号",
-					"当前账号 quota 用尽，自动切换失败: "+err.Error())
-			} else {
-				utils.DLog("[回调] onKeyExhausted: MITM轮换成功 → %s", next.Email)
-			}
-		} else {
-			utils.DLog("[回调] onKeyExhausted: AutoSwitchOnQuotaExhausted=false，不切号")
-		}
-	})
-	a.mitmProxy.SetOnKeyAccessDenied(func(apiKey, detail string) {
-		utils.DLog("[回调] onKeyAccessDenied 触发: key=%s...", apiKey[:min(12, len(apiKey))])
-		a.handleMitmKeyAccessDenied(apiKey, detail)
-	})
-	a.mitmProxy.SetOnCurrentKeyChanged(func(apiKey, reason string) {
-		utils.DLog("[回调] onCurrentKeyChanged 触发: key=%s... reason=%s", apiKey[:min(12, len(apiKey))], reason)
-		a.handleMitmCurrentKeyChanged(apiKey, reason)
-	})
 	a.openaiRelay = services.NewOpenAIRelay(a.mitmProxy, func(msg string) {
 		utils.DLog("%s", msg)
 	}, "", a.usageTracker)
-	a.openaiRelay.SetOnSuccess(func(apiKey string) {
-		accounts := a.store.GetAllAccounts()
-		accID := findAccountIDForMITMAPIKey(accounts, apiKey)
-		if accID == "" {
-			return
-		}
-		_ = a.RefreshAccountQuota(accID)
+	a.wireProxyCallbacks()
+	// ── 导入流水线 ──（必须在 mitmProxy 创建后，因为 syncMitmPoolKeys 依赖它）
+	// enrichAccountInfo 返回 bool，子包不关心结果只用副作用，这里用 closure 包裹丢弃返回值。
+	a.importMod = importsvc.New(importsvc.Deps{
+		Store:        a.store,
+		WindsurfSvc:  a.windsurfSvc,
+		EnrichFull:   func(acc *models.Account) { _ = a.enrichAccountInfo(acc) },
+		EnrichLite:   a.enrichAccountInfoLite,
+		SyncMitmPool: a.syncMitmPoolKeys,
 	})
+	// ── Clash IP 轮换 ──
+	a.clashMod = clash.New(a.store, a.mitmProxy)
 	a.syncMitmPoolKeys()
 	a.syncForgeConfig()
 	a.syncStaticCacheConfig()
 	a.syncJailbreakConfig()
+	// F7-REMOVAL: 下一行删除
+	a.syncSmartFriendConfig()
 	if settings.AutoRefreshTokens {
 		a.startAutoRefresh()
 	}

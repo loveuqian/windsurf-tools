@@ -48,7 +48,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
         >
           <div
             v-if="confirmState.visible"
-            class="w-full sm:w-[min(100%,400px)] mx-auto sm:mx-0 bg-white dark:bg-[#1c1c1e] backdrop-blur-xl rounded-t-[28px] sm:rounded-[28px] shadow-[0_-20px_60px_rgba(0,0,0,0.3)] dark:shadow-[0_-20px_60px_rgba(0,0,0,0.6)] ring-1 ring-white/50 dark:ring-white/10 overflow-hidden"
+            class="w-full sm:w-[min(100%,400px)] mx-auto sm:mx-0 bg-white dark:bg-[#1c1c1e] backdrop-blur-xl rounded-t-ios-card sm:rounded-ios-card shadow-ios-sheet dark:shadow-[0_-20px_60px_rgba(0,0,0,0.6)] ring-1 ring-white/50 dark:ring-white/10 overflow-hidden"
             role="dialog"
             aria-modal="true"
           >
@@ -85,7 +85,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
             <div class="px-3 pb-3 flex flex-col gap-2">
               <button
                 type="button"
-                class="no-drag-region w-full py-3.5 rounded-[16px] text-[15px] font-bold transition-all active:scale-[0.98]"
+                class="no-drag-region w-full py-3.5 rounded-ios-block text-[15px] font-bold transition-all active:scale-[0.98]"
                 :class="
                   confirmState.destructive
                     ? 'bg-rose-500 text-white hover:bg-rose-600 shadow-md shadow-rose-500/20'
@@ -100,7 +100,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
               </button>
               <button
                 type="button"
-                class="no-drag-region w-full py-3.5 rounded-[16px] text-[15px] font-bold bg-black/[0.05] dark:bg-white/[0.08] text-gray-700 dark:text-gray-200 hover:bg-black/[0.08] dark:hover:bg-white/[0.12] transition-all active:scale-[0.98]"
+                class="no-drag-region w-full py-3.5 rounded-ios-block text-[15px] font-bold bg-black/[0.05] dark:bg-white/[0.08] text-gray-700 dark:text-gray-200 hover:bg-black/[0.08] dark:hover:bg-white/[0.12] transition-all active:scale-[0.98]"
                 @click="resolveConfirm(false)"
               >
                 {{ confirmState.cancelText }}

@@ -5,6 +5,9 @@ import { useAccountStore } from '../../stores/useAccountStore'
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  ClipboardCopy,
   KeyRound,
   Loader2,
   Mail,
@@ -16,7 +19,7 @@ import {
 } from 'lucide-vue-next'
 import { groupImportLines, summarizeGrouped, type DetectionSummary } from '../../utils/importAutoDetect'
 import { importBatched } from '../../utils/importBatch'
-import { showToast } from '../../utils/toast'
+import { showToast, showErrorToast } from '../../utils/toast'
 import { main } from '../../../wailsjs/go/models'
 
 const props = defineProps<{ isOpen: boolean }>()
@@ -26,12 +29,14 @@ const accountStore = useAccountStore()
 const inputText = ref('')
 const isLoading = ref(false)
 const results = ref<main.ImportResult[]>([])
+const expandedFailures = ref<Set<number>>(new Set())
 
 watch(() => props.isOpen, (open: boolean) => {
   if (!open) {
     // 关闭同时清除输入与结果，避免下次打开看到上次残留
     inputText.value = ''
     results.value = []
+    expandedFailures.value = new Set()
   }
 })
 
@@ -67,6 +72,63 @@ const activeTypes = computed(() => {
     .filter(t => s[t] > 0)
     .map(t => ({ type: t, count: s[t], ...typeLabels[t] }))
 })
+
+// ── 格式示例 chip ──
+// 把 5 种支持格式抽成可点击范本 — 用户点 chip → 把样例追加到 textarea，
+// 解决新手看占位符也不知道「邮箱----devin-session-token$xxx」长什么样的痛点。
+const sampleSnippets: Array<{ key: string; label: string; example: string; icon: any; color: string }> = [
+  {
+    key: 'api_key',
+    label: 'API Key',
+    example: 'sk-ws-01-PY-xF5So2UsSMwJmh3uoMN3Offz72sCKQFxRFkkQce9LSvvtcWZxThzto7Z9b8zZbtfTLB-YPGlPsW9bKRmJ_qgvZ5WRtA',
+    icon: KeyRound,
+    color: 'text-violet-600 dark:text-violet-300',
+  },
+  {
+    key: 'jwt',
+    label: 'JWT',
+    example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4iLCJpYXQiOjE1MTYyMzkwMjJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c',
+    icon: Shield,
+    color: 'text-amber-600 dark:text-amber-300',
+  },
+  {
+    key: 'password',
+    label: '邮箱/密码',
+    example: 'user@example.com password123',
+    icon: Mail,
+    color: 'text-ios-blue',
+  },
+  {
+    key: 'refresh_token',
+    label: 'Refresh Token',
+    example: 'AMf-vBz3OJ3G8x1QQaQSFfU46fK9oODqKJGw-k5a5zE8mu-nq9zR4o-TC92P8KO0A6v_EXL5DlgVR1A7x_7P0i3VOXeoPNPyi0IDLN4ZP6iSHohosYjyUMELkC7z',
+    icon: RefreshCcw,
+    color: 'text-emerald-600 dark:text-emerald-400',
+  },
+  {
+    key: 'email_apikey',
+    label: '邮箱----Token',
+    example: 'user@example.com----devin-session-token$eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature',
+    icon: KeyRound,
+    color: 'text-pink-600 dark:text-pink-300',
+  },
+]
+
+const insertSample = (snippet: (typeof sampleSnippets)[number]) => {
+  const cur = inputText.value
+  const sep = cur && !cur.endsWith('\n') ? '\n' : ''
+  inputText.value = cur + sep + snippet.example + '\n'
+}
+
+const toggleFailure = (idx: number) => {
+  const next = new Set(expandedFailures.value)
+  if (next.has(idx)) {
+    next.delete(idx)
+  } else {
+    next.add(idx)
+  }
+  expandedFailures.value = next
+}
 
 const handleImport = async () => {
   const lines = inputText.value.split('\n').map(l => l.trim()).filter(Boolean)
@@ -139,7 +201,7 @@ const handleImport = async () => {
     inputText.value = ''
   } catch (e) {
     console.error(e)
-    showToast(`导入失败: ${String(e)}`, 'error')
+    showErrorToast(e, "导入失败")
   } finally {
     isLoading.value = false
   }
@@ -152,7 +214,7 @@ const handleImport = async () => {
     class="fixed inset-0 z-[100] flex animate-in fade-in duration-300 items-center justify-center bg-black/40 dark:bg-black/60 backdrop-blur-md"
   >
     <div
-      class="bg-ios-bg dark:bg-ios-bgDark w-full sm:w-[580px] max-h-[85vh] rounded-[28px] shadow-[0_20px_60px_-10px_rgba(0,0,0,0.3)] dark:shadow-[0_20px_60px_-10px_rgba(0,0,0,0.8)] ring-1 ring-white/50 dark:ring-white/10 flex flex-col transform transition-transform animate-in slide-in-from-bottom-12 duration-[400ms] ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden"
+      class="bg-ios-bg dark:bg-ios-bgDark w-full sm:w-[580px] max-h-[85vh] rounded-ios-card shadow-[0_20px_60px_-10px_rgba(0,0,0,0.3)] dark:shadow-[0_20px_60px_-10px_rgba(0,0,0,0.8)] ring-1 ring-white/50 dark:ring-white/10 flex flex-col transform transition-transform animate-in slide-in-from-bottom-12 duration-[400ms] ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden"
     >
       <!-- Header -->
       <div
@@ -239,6 +301,30 @@ const handleImport = async () => {
           </div>
         </div>
 
+        <!-- 格式示例 chip ──
+             5 种支持格式各自做成可点击 chip。点击 = 把示例追加到 textarea，
+             解决「占位符里的 user@mail.com----devin-session-token$eyJ... 到底长什么样」
+             这种最常见的新手困惑。 -->
+        <div class="mb-3">
+          <div class="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-ios-textSecondary dark:text-ios-textSecondaryDark">
+            <ClipboardCopy class="h-3 w-3" stroke-width="2.5" />
+            支持格式 · 点击插入示例
+          </div>
+          <div class="flex flex-wrap gap-1.5">
+            <button
+              v-for="snippet in sampleSnippets"
+              :key="snippet.key"
+              type="button"
+              class="no-drag-region inline-flex items-center gap-1.5 rounded-full border border-black/[0.06] bg-white/85 px-3 py-1.5 text-[12px] font-bold text-ios-text dark:text-ios-textDark transition-all hover:-translate-y-px hover:bg-white hover:shadow-sm dark:border-white/[0.08] dark:bg-white/[0.06] ios-btn"
+              :title="`点击把「${snippet.label}」示例追加到下方输入框`"
+              @click="insertSample(snippet)"
+            >
+              <component :is="snippet.icon" class="h-3.5 w-3.5" :class="snippet.color" stroke-width="2.4" />
+              <span :class="snippet.color">{{ snippet.label }}</span>
+            </button>
+          </div>
+        </div>
+
         <!-- 输入框 -->
         <div class="rounded-[22px] border border-black/[0.06] bg-white/75 p-4 shadow-[0_14px_32px_rgba(15,23,42,0.06)] dark:border-white/[0.06] dark:bg-black/20">
           <div class="mb-3 flex items-center justify-between gap-3">
@@ -253,7 +339,7 @@ const handleImport = async () => {
           <textarea
             v-model="inputText"
             class="no-drag-region w-full h-[180px] bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(246,249,252,0.9))] dark:bg-[linear-gradient(180deg,rgba(10,10,12,0.75),rgba(18,18,20,0.88))] border border-black/10 dark:border-white/10 p-4 rounded-[18px] focus:outline-none focus:ring-2 focus:ring-ios-blue/50 dark:focus:ring-ios-blue/30 resize-none font-mono text-[13px] shadow-inner transition-all"
-            placeholder="粘贴任意格式的凭证…&#10;sk-ws-01-xxxx&#10;eyJhbGciOi...&#10;user@mail.com password123&#10;user@mail.com----devin-session-token$eyJ...&#10;AMf-vBx..."
+            placeholder="粘贴任意格式的凭证…&#10;或点击上方示例 chip 试试看&#10;&#10;sk-ws-01-xxxx&#10;eyJhbGciOi...&#10;user@mail.com password123&#10;user@mail.com----devin-session-token$eyJ...&#10;AMf-vBx..."
           />
         </div>
 
@@ -267,21 +353,50 @@ const handleImport = async () => {
               已处理 {{ results.length }} 条
             </span>
           </div>
+          <!-- 单行 = 成功 / 失败概要(失败可点击展开看完整 error 和邮箱) -->
           <div
             v-for="(r, i) in results"
             :key="i"
-            class="text-xs p-3 rounded-[18px] flex items-center justify-between shadow-sm border backdrop-blur-sm"
+            class="rounded-[18px] border shadow-sm backdrop-blur-sm overflow-hidden transition-colors"
             :class="
               r.success
                 ? 'bg-emerald-500/[0.08] border-emerald-500/15 text-emerald-700 dark:text-emerald-300'
                 : 'bg-rose-500/[0.07] border-rose-500/15 text-rose-700 dark:text-rose-300'
             "
           >
-            <span class="font-semibold truncate max-w-[260px] mr-2" :title="r.email">{{ r.email }}</span>
-            <div class="flex items-center shrink-0 font-medium">
-              <CheckCircle2 v-if="r.success" class="w-4 h-4 mr-1" />
-              <AlertCircle v-else class="w-4 h-4 mr-1" />
-              {{ r.success ? '成功' : r.error || '失败' }}
+            <button
+              type="button"
+              class="no-drag-region w-full flex items-center justify-between gap-2 p-3 text-xs text-left disabled:cursor-default"
+              :disabled="r.success"
+              :title="r.success ? '导入成功' : '点击查看完整错误信息'"
+              @click="() => !r.success && toggleFailure(i)"
+            >
+              <span class="font-semibold truncate flex-1 min-w-0" :title="r.email">{{ r.email || '—' }}</span>
+              <div class="flex items-center shrink-0 font-medium gap-1">
+                <CheckCircle2 v-if="r.success" class="w-4 h-4" />
+                <AlertCircle v-else class="w-4 h-4" />
+                <span class="max-w-[160px] truncate">{{ r.success ? '成功' : (r.error || '失败') }}</span>
+                <ChevronDown
+                  v-if="!r.success && !expandedFailures.has(i)"
+                  class="w-3.5 h-3.5 opacity-70"
+                  stroke-width="2.5"
+                />
+                <ChevronUp
+                  v-if="!r.success && expandedFailures.has(i)"
+                  class="w-3.5 h-3.5 opacity-70"
+                  stroke-width="2.5"
+                />
+              </div>
+            </button>
+            <!-- 失败详情：完整邮箱 + 完整 error，可框选复制 -->
+            <div
+              v-if="!r.success && expandedFailures.has(i)"
+              class="px-3 pb-3 pt-0 select-text"
+            >
+              <div class="rounded-[12px] bg-rose-500/[0.06] border border-rose-500/10 p-2.5 text-[11px] leading-relaxed font-mono break-all whitespace-pre-wrap">
+                <div v-if="r.email" class="opacity-75 mb-1">email: {{ r.email }}</div>
+                <div>{{ r.error || '无错误描述' }}</div>
+              </div>
             </div>
           </div>
         </div>
@@ -316,7 +431,7 @@ const handleImport = async () => {
           </div>
           <button
             type="button"
-            class="no-drag-region h-[48px] min-w-[144px] px-5 bg-gradient-to-b from-[#3b82f6] to-ios-blue text-white rounded-[16px] font-semibold text-[16px] ios-btn flex items-center justify-center disabled:opacity-50 shadow-md shadow-ios-blue/20 ring-1 ring-black/5 ring-inset active:ring-black/10"
+            class="no-drag-region h-[48px] min-w-[144px] px-5 bg-gradient-to-b from-[#3b82f6] to-ios-blue text-white rounded-ios-block font-semibold text-[16px] ios-btn flex items-center justify-center disabled:opacity-50 shadow-md shadow-ios-blue/20 ring-1 ring-black/5 ring-inset active:ring-black/10"
             :disabled="isLoading || !inputText.trim() || lineCount === 0"
             @click="handleImport"
           >

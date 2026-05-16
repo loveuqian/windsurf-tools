@@ -8,7 +8,7 @@ import { APP_VERSION } from '../../utils/appMeta'
 import { APP_PRODUCT_NAME, APP_PRODUCT_TAGLINE } from '../../utils/appMode'
 import { cycleTheme, themeLabel, themeMode } from '../../utils/theme'
 import { APIInfo } from '../../api/wails'
-import { showToast } from '../../utils/toast'
+import { showToast, showErrorToast  } from '../../utils/toast'
 
 const mitmStore = useMitmStatusStore()
 const settingsStore = useSettingsStore()
@@ -56,7 +56,7 @@ const handleCopyActiveKey = async () => {
     const short = k.length > 16 ? k.slice(0, 12) + '…' + k.slice(-4) : k
     showToast(`已复制 ${short}`, 'success')
   } catch (e) {
-    showToast(`复制失败: ${String(e)}`, 'error')
+    showErrorToast(e, "复制失败")
   }
 }
 
@@ -66,7 +66,7 @@ const handleUnpinFromHeader = async () => {
     await settingsStore.fetchSettings(true)
     showToast('已解锁，自动切换已恢复', 'success')
   } catch (e) {
-    showToast(`解锁失败: ${String(e)}`, 'error')
+    showErrorToast(e, "解锁失败")
   }
 }
 const poolCount = computed(() => mitmStore.status?.pool_status?.length ?? 0)

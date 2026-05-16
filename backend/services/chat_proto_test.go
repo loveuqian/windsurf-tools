@@ -125,6 +125,22 @@ func TestBuildChatRequestProducesValidProtobuf(t *testing.T) {
 	}
 }
 
+func TestBuildChatRequestSmartFriendUsesF7Mode13(t *testing.T) {
+	msgs := []ChatMessage{{Role: "user", Content: "Hello world"}}
+
+	normal := BuildChatRequestWithModel(msgs, "sk-ws-test123", "jwt-token", "", "", nil)
+	normalFields := decodeProtoMessage(normal)
+	if got := firstTopLevelVarint(normalFields, 7); got != 5 {
+		t.Fatalf("normal F7 = %d, want 5", got)
+	}
+
+	smartFriend := buildChatRequestWithModelMode(msgs, "sk-ws-test123", "jwt-token", "", "", nil, true)
+	smartFriendFields := decodeProtoMessage(smartFriend)
+	if got := firstTopLevelVarint(smartFriendFields, 7); got != 13 {
+		t.Fatalf("smartFriend F7 = %d, want 13", got)
+	}
+}
+
 func TestBuildChatRequestOmitsConversationIDWhenEmpty(t *testing.T) {
 	msgs := []ChatMessage{{Role: "user", Content: "test"}}
 	body := BuildChatRequest(msgs, "sk-ws-key", "jwt", "", nil)
@@ -231,6 +247,15 @@ func TestFlattenMessagesEmpty(t *testing.T) {
 
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && searchString(s, sub)
+}
+
+func firstTopLevelVarint(fields protoMessage, fieldNumber uint64) uint64 {
+	for _, f := range fields {
+		if f.Number == fieldNumber && f.Wire == 0 {
+			return f.Varint
+		}
+	}
+	return 0
 }
 
 func searchString(s, sub string) bool {

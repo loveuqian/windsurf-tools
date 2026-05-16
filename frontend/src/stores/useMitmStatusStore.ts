@@ -17,11 +17,14 @@ export const useMitmStatusStore = defineStore("mitmStatus", () => {
 
   const fetchStatus = async (force = false) => {
     const now = Date.now();
-    if (fetchInFlight) return fetchInFlight;
+    // force=true 不复用 in-flight；切号后立刻刷状态需要拿到新 currentKey。
+    if (fetchInFlight && !force) return fetchInFlight;
     if (!force && status.value && now - lastFetchedAt < 1200) {
       return;
     }
-    const blocking = !hasLoadedOnce.value;
+    // F3 修复：和 useAccountStore 对齐，已有数据时不再阻塞 UI。否则切回 tab
+    // 触发 fetchStatus 时会短暂闪一次骨架屏。
+    const blocking = !hasLoadedOnce.value && status.value == null;
     if (blocking) {
       isLoading.value = true;
     } else {
@@ -72,19 +75,9 @@ export const useMitmStatusStore = defineStore("mitmStatus", () => {
     }, nextPollDelay());
   };
 
-  const onVisibilityChange = () => {
-    if (
-      typeof document !== "undefined" &&
-      document.visibilityState === "visible"
-    ) {
-      void fetchStatus().finally(scheduleNextTick);
-    }
-  };
-
   const startPolling = () => {
     if (pollTimer) return;
     void fetchStatus().finally(scheduleNextTick);
-    document.addEventListener("visibilitychange", onVisibilityChange);
   };
 
   const stopPolling = () => {
@@ -92,7 +85,18 @@ export const useMitmStatusStore = defineStore("mitmStatus", () => {
       clearTimeout(pollTimer);
       pollTimer = null;
     }
-    document.removeEventListener("visibilitychange", onVisibilityChange);
+  };
+
+  // notifyVisibleAgain 由 App.vue 的统一 visibilitychange listener 调用。
+  // 之前 store 自己监听 visibilitychange，与 App.vue 重复，每次切回前台
+  // 都触发两次 fetch。现在改成显式上推：listener 单点持有，store 只管刷新。
+  const notifyVisibleAgain = () => {
+    if (!pollTimer) {
+      // polling 未启动 → 只刷一次最新状态，不重启循环
+      void fetchStatus(true);
+      return;
+    }
+    void fetchStatus(true).finally(scheduleNextTick);
   };
 
   const switchToNext = async () => {
@@ -147,6 +151,7 @@ export const useMitmStatusStore = defineStore("mitmStatus", () => {
     ensureStatusLoaded,
     startPolling,
     stopPolling,
+    notifyVisibleAgain,
     switchToNext,
     switchToAccount,
     sessionCount,

@@ -44,6 +44,16 @@ func BuildChatRequest(messages []ChatMessage, apiKey, jwt, conversationID string
 
 // BuildChatRequestWithModel 同 BuildChatRequest，支持指定模型名。
 func BuildChatRequestWithModel(messages []ChatMessage, apiKey, jwt, conversationID, model string, fp *KeyFingerprint) []byte {
+	// F7-REMOVAL: 下一行调用 buildChatRequestWithModelMode(..., false) 改回「老实现」。
+	return buildChatRequestWithModelMode(messages, apiKey, jwt, conversationID, model, fp, false)
+}
+
+// F7-REMOVAL: 本函数是为 F7 专门引入的包装。删除时：
+//   1) 把该函数改名为 buildChatRequestWithModel、去掉 smartFriend 参数；
+//   2) 下面 F7 赋值块删掉，F7 回到字面量 5；
+//   3) openai_relay.go / relay_anthropic.go / chat_proto_test.go / 上面指向
+//      buildChatRequestWithModelMode 的调用点一并改回。
+func buildChatRequestWithModelMode(messages []ChatMessage, apiKey, jwt, conversationID, model string, fp *KeyFingerprint, smartFriend bool) []byte {
 	// F1: metadata
 	metadata := buildChatMetadata(apiKey, jwt, fp)
 	metaField := encodeBytesField(1, metadata)
@@ -95,7 +105,12 @@ func BuildChatRequestWithModel(messages []ChatMessage, apiKey, jwt, conversation
 	}
 
 	// F7: settings (varint 5 — 匹配真实 IDE 请求)
-	body = append(body, encodeVarintField(7, 5)...)
+	// F7-REMOVAL: 下面三行 F7 动态判断改回「f7 := uint64(5)」后直接 encodeVarintField。
+	f7 := uint64(5)
+	if smartFriend {
+		f7 = 13
+	}
+	body = append(body, encodeVarintField(7, f7)...)
 
 	// F8: generation config
 	body = append(body, encodeBytesField(8, buildGenerationConfig())...)

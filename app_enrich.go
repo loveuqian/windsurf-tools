@@ -1,10 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"strings"
-	"time"
+	"windsurf-tools-wails/backend/app/accountmeta"
 	"windsurf-tools-wails/backend/models"
 	"windsurf-tools-wails/backend/services"
 	"windsurf-tools-wails/backend/utils"
@@ -12,9 +11,27 @@ import (
 
 // ═══════════════════════════════════════
 // 辅助：账号信息 enrich
+//
+// 纯账号元信息推导（normalize / parseEnd / choosePreferredExpiry 等）已迁到
+// backend/app/accountmeta；本文件只保留依赖 *App 的实例方法（grpc 调用 / 联表 enrich）。
+// 旧名通过下方 var alias 暴露给本文件其他位置 + 邻近 app_*.go 复用，调用点零改动。
 // ═══════════════════════════════════════
 
-var asiaShanghaiLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
+var (
+	applyJWTClaims                         = accountmeta.ApplyJWTClaims
+	applyAccountProfile                    = accountmeta.ApplyProfile
+	applyAccessErrorStatus                 = accountmeta.ApplyAccessErrorStatus
+	choosePreferredSubscriptionExpiry      = accountmeta.ChoosePreferredExpiry
+	normalizeAccountPlanAndStatus          = accountmeta.NormalizeAccount
+	derivePlanNameFromClaims               = accountmeta.DerivePlanNameFromClaims
+	parseSubscriptionEndTime               = accountmeta.ParseSubscriptionEnd
+	subscriptionEndBeforeAccountCreated    = accountmeta.SubscriptionEndBeforeAccountCreated
+	subscriptionEndLooksLikeStalePlanStart = accountmeta.SubscriptionEndLooksLikeStalePlanStart
+	manualSubscriptionExpiryHint           = accountmeta.ManualExpiryHint
+	parseManualSubscriptionExpiryHint      = accountmeta.ParseManualExpiryHint
+	looksLikeDatePrefix                    = accountmeta.LooksLikeDatePrefix
+	formatQuotaPercent                     = accountmeta.FormatQuotaPercent
+)
 
 // enrichAccountQuotaOnly 热轮询额度用尽检测：只更新 JWT 解析 + 额度相关 profile，不做 RegisterUser / GetAccountInfo。
 // 返回 true 表示至少获取到了部分有效额度数据。
@@ -254,307 +271,4 @@ func (a *App) enrichAccountInfoWithService(svc *services.WindsurfService, acc *m
 		acc.PlanName = "unknown"
 	}
 	return gotData
-}
-
-func applyJWTClaims(acc *models.Account, claims *services.JWTClaims) {
-	if claims == nil {
-		return
-	}
-	if claims.Email != "" {
-		acc.Email = claims.Email
-	}
-	if acc.Nickname == "" && claims.Name != "" {
-		acc.Nickname = claims.Name
-	}
-	// 每次根据 JWT + 本地记录的到期时间重算套餐；到期后不再沿用缓存的 Pro/Trial（后续 GetPlanStatus 可覆盖）
-	if plan := derivePlanNameFromClaims(claims, choosePreferredSubscriptionExpiry(acc, "")); plan != "" {
-		acc.PlanName = plan
-	}
-	if claims.TrialEnd != "" {
-		acc.SubscriptionExpiresAt = choosePreferredSubscriptionExpiry(acc, claims.TrialEnd)
-	}
-	normalizeAccountPlanAndStatus(acc)
-}
-
-func applyAccountProfile(acc *models.Account, profile *services.AccountProfile) {
-	if profile == nil {
-		return
-	}
-	if profile.Email != "" {
-		acc.Email = profile.Email
-	}
-	if profile.Name != "" && (acc.Nickname == "" || acc.Nickname == strings.Split(acc.Email, "@")[0]) {
-		acc.Nickname = profile.Name
-	}
-	if profile.PlanName != "" {
-		acc.PlanName = profile.PlanName
-	}
-	// 额度字段完全以本次官方响应为准，避免沿用旧快照。
-	acc.TotalQuota = profile.TotalCredits
-	acc.UsedQuota = profile.UsedCredits
-	if profile.DailyQuotaRemaining != nil {
-		acc.DailyRemaining = formatQuotaPercent(*profile.DailyQuotaRemaining)
-	} else {
-		acc.DailyRemaining = ""
-	}
-	if profile.WeeklyQuotaRemaining != nil {
-		acc.WeeklyRemaining = formatQuotaPercent(*profile.WeeklyQuotaRemaining)
-	} else {
-		acc.WeeklyRemaining = ""
-	}
-	// 优先使用官方接口返回的 resetAt；缺失时保持为空，不再伪造周额度/周重置时间。
-	acc.DailyResetAt = strings.TrimSpace(profile.DailyResetAt)
-	acc.WeeklyResetAt = strings.TrimSpace(profile.WeeklyResetAt)
-	if preferred := choosePreferredSubscriptionExpiry(acc, profile.SubscriptionExpiresAt); preferred != "" {
-		acc.SubscriptionExpiresAt = preferred
-	} else {
-		acc.SubscriptionExpiresAt = ""
-	}
-	normalizeAccountPlanAndStatus(acc)
-}
-
-func choosePreferredSubscriptionExpiry(acc *models.Account, candidate string) string {
-	candidate = strings.TrimSpace(candidate)
-	if acc == nil {
-		return candidate
-	}
-
-	current := strings.TrimSpace(acc.SubscriptionExpiresAt)
-	hint := manualSubscriptionExpiryHint(acc)
-
-	if candidate != "" && !subscriptionEndBeforeAccountCreated(acc, candidate) {
-		return candidate
-	}
-	if current != "" && !subscriptionEndBeforeAccountCreated(acc, current) {
-		return current
-	}
-	if hint != "" {
-		return hint
-	}
-	return ""
-}
-
-func normalizeAccountPlanAndStatus(acc *models.Account) {
-	if acc == nil {
-		return
-	}
-	acc.SubscriptionExpiresAt = choosePreferredSubscriptionExpiry(acc, "")
-	status := strings.TrimSpace(strings.ToLower(acc.Status))
-	if status == "" {
-		status = "active"
-	}
-	if status == "disabled" {
-		acc.Status = "disabled"
-		return
-	}
-	if acc.SubscriptionExpiresAt == "" {
-		acc.Status = status
-		return
-	}
-	t, ok := parseSubscriptionEndTime(acc.SubscriptionExpiresAt)
-	if !ok {
-		acc.Status = status
-		return
-	}
-	if !t.After(time.Now()) {
-		acc.Status = "expired"
-		if utils.PlanTone(acc.PlanName) != "free" {
-			acc.PlanName = "Free"
-		}
-		return
-	}
-	acc.Status = "active"
-}
-
-func applyAccessErrorStatus(acc *models.Account, err error) {
-	if acc == nil || err == nil {
-		return
-	}
-	lower := strings.ToLower(strings.TrimSpace(err.Error()))
-	switch {
-	case strings.Contains(lower, "user is disabled in windsurf team"):
-		acc.Status = "disabled"
-	case strings.Contains(lower, "subscription is not active"):
-		acc.Status = "expired"
-		if utils.PlanTone(acc.PlanName) != "free" {
-			acc.PlanName = "Free"
-		}
-	case strings.Contains(lower, `"code":"permission_denied"`), strings.Contains(lower, "permission denied"):
-		acc.Status = "disabled"
-	}
-}
-
-func manualSubscriptionExpiryHint(acc *models.Account) string {
-	if acc == nil {
-		return ""
-	}
-	for _, raw := range []string{acc.Remark, acc.Nickname} {
-		if ts, ok := parseManualSubscriptionExpiryHint(raw); ok {
-			return ts.UTC().Format(time.RFC3339)
-		}
-	}
-	return ""
-}
-
-// dateLikePrefix 快速检查：字符串必须以 4位数字+分隔符 开头才可能是日期，跳过 99% 的非日期字符串
-func looksLikeDatePrefix(s string) bool {
-	if len(s) < 8 { // "2026/1/2" 最短8字符
-		return false
-	}
-	for i := 0; i < 4; i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return s[4] == '/' || s[4] == '-' || s[4] == '.'
-}
-
-func parseManualSubscriptionExpiryHint(raw string) (time.Time, bool) {
-	raw = strings.TrimSpace(strings.Trim(raw, `"`))
-	if raw == "" || !looksLikeDatePrefix(raw) {
-		return time.Time{}, false
-	}
-
-	layouts := []struct {
-		layout   string
-		endOfDay bool
-	}{
-		{layout: "2006/1/2", endOfDay: true},
-		{layout: "2006-1-2", endOfDay: true},
-		{layout: "2006.1.2", endOfDay: true},
-		{layout: "2006/01/02", endOfDay: true},
-		{layout: "2006-01-02", endOfDay: true},
-		{layout: "2006.01.02", endOfDay: true},
-		{layout: "2006/1/2 15:04"},
-		{layout: "2006-1-2 15:04"},
-		{layout: "2006.1.2 15:04"},
-		{layout: "2006/01/02 15:04"},
-		{layout: "2006-01-02 15:04"},
-		{layout: "2006.01.02 15:04"},
-		{layout: "2006/1/2 15:04:05"},
-		{layout: "2006-1-2 15:04:05"},
-		{layout: "2006.1.2 15:04:05"},
-		{layout: "2006/01/02 15:04:05"},
-		{layout: "2006-01-02 15:04:05"},
-		{layout: "2006.01.02 15:04:05"},
-		{layout: "2006-1-2T15:04"},
-		{layout: "2006-01-02T15:04"},
-		{layout: "2006-1-2T15:04:05"},
-		{layout: "2006-01-02T15:04:05"},
-	}
-	for _, item := range layouts {
-		t, err := time.ParseInLocation(item.layout, raw, asiaShanghaiLocation)
-		if err != nil {
-			continue
-		}
-		if item.endOfDay {
-			t = time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 0, asiaShanghaiLocation)
-		}
-		return t, true
-	}
-	return time.Time{}, false
-}
-
-func subscriptionEndBeforeAccountCreated(acc *models.Account, value string) bool {
-	if acc == nil {
-		return false
-	}
-	tEnd, ok := parseSubscriptionEndTime(value)
-	if !ok {
-		return false
-	}
-	tCreated, ok := parseSubscriptionEndTime(strings.TrimSpace(acc.CreatedAt))
-	if !ok {
-		return false
-	}
-	return tEnd.Before(tCreated)
-}
-
-// subscriptionEndLooksLikeStalePlanStart：同步到的「到期」早于账号写入本工具的时间，且日/周额度显示仍有剩余时，
-// 多为 GetPlanStatus.planEnd 表示周期开始而非订阅结束。
-func subscriptionEndLooksLikeStalePlanStart(acc *models.Account, profileEnd string) bool {
-	if acc == nil {
-		return false
-	}
-	if !subscriptionEndBeforeAccountCreated(acc, profileEnd) {
-		return false
-	}
-	d, dOk := utils.ParseQuotaPercentString(acc.DailyRemaining)
-	w, wOk := utils.ParseQuotaPercentString(acc.WeeklyRemaining)
-	hasQuota := (dOk && d > 0.0001) || (wOk && w > 0.0001)
-	return hasQuota
-}
-
-// derivePlanNameFromClaims 从 JWT 推导套餐。storedSubEnd 为 accounts.json 里已有的 subscription_expires_at（JWT 无结束时间时参与判断是否已到期）。
-func derivePlanNameFromClaims(claims *services.JWTClaims, storedSubEnd string) string {
-	if claims == nil {
-		return ""
-	}
-	end := strings.TrimSpace(claims.TrialEnd)
-	if end == "" {
-		end = strings.TrimSpace(storedSubEnd)
-	}
-	if end != "" {
-		if t, ok := parseSubscriptionEndTime(end); ok && !t.After(time.Now()) {
-			// 订阅/试用已结束：JWT 内 pro/tier 可能尚未刷新，先标为 Free，真实档位由 GetPlanStatus/GetUserStatus 覆盖
-			return "Free"
-		}
-	}
-	if claims.Pro {
-		return "Pro"
-	}
-	teamsTier := strings.ToUpper(claims.TeamsTier)
-	switch teamsTier {
-	case "TEAMS_TIER_PRO":
-		return "Pro"
-	case "TEAMS_TIER_MAX", "TEAMS_TIER_PRO_MAX", "TEAMS_TIER_ULTIMATE":
-		return "Max"
-	case "TEAMS_TIER_ENTERPRISE":
-		return "Enterprise"
-	case "TEAMS_TIER_TEAMS":
-		return "Teams"
-	case "TEAMS_TIER_TRIAL":
-		return "Trial"
-	case "TEAMS_TIER_FREE":
-		return "Free"
-	}
-	if strings.Contains(teamsTier, "TRIAL") {
-		return "Trial"
-	}
-	if strings.Contains(teamsTier, "MAX") || strings.Contains(teamsTier, "ULTIMATE") {
-		return "Max"
-	}
-	if strings.Contains(teamsTier, "ENTERPRISE") {
-		return "Enterprise"
-	}
-	if teamsTier == "TEAMS_TIER_TEAMS" || (strings.Contains(teamsTier, "TEAMS") && !strings.Contains(teamsTier, "TIER_FREE") && !strings.Contains(teamsTier, "TIER_PRO") && !strings.Contains(teamsTier, "TIER_TRIAL")) {
-		return "Teams"
-	}
-	if strings.Contains(teamsTier, "PRO") {
-		return "Pro"
-	}
-	if claims.TrialEnd != "" {
-		if t, ok := parseSubscriptionEndTime(claims.TrialEnd); ok && t.After(time.Now()) {
-			return "Trial"
-		}
-	}
-	return ""
-}
-
-func parseSubscriptionEndTime(s string) (time.Time, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return time.Time{}, false
-	}
-	s = strings.Trim(s, `"`)
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, time.DateTime} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t, true
-		}
-	}
-	return time.Time{}, false
-}
-
-func formatQuotaPercent(value float64) string {
-	return fmt.Sprintf("%.2f%%", value)
 }

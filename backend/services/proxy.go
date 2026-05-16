@@ -280,8 +280,12 @@ type MitmProxy struct {
 
 	forgeConfig       ForgeConfig
 	staticCacheConfig StaticCacheConfig
-	jailbreakConfig JailbreakConfig // chat system prompt 末尾注入「破限」覆盖文本
-	jailbreakStats  JailbreakStats  // 注入计数 / 上次时间，供 UI 状态面板
+	jailbreakConfig   JailbreakConfig // chat system prompt 末尾注入「破限」覆盖文本
+	jailbreakStats    JailbreakStats  // 注入计数 / 上次时间，供 UI 状态面板
+
+	// F7-REMOVAL: 本行字段删除。同步去掉 SetSmartFriendEnabled / GetSmartFriendEnabled
+	// (定义在 proxy_smartfriend.go) 以及下面 markRuntimeExhaustedAndRotate / handleRequest 两处分支。
+	smartFriendEnabled bool // F7 patch: CASCADE(5) → SMART_FRIEND(13)
 
 	usageTracker *UsageTracker
 
@@ -522,6 +526,13 @@ func (p *MitmProxy) markRuntimeExhaustedAndRotate(usedKey, detail string) string
 	p.log("★ markRuntimeExhaustedAndRotate: key=%s... detail=%s", usedKey[:minStr(12, len(usedKey))], detail)
 	rotatedKey := ""
 	p.mu.Lock()
+	// F7-REMOVAL: 整个 if p.smartFriendEnabled 分支删除
+	if p.smartFriendEnabled {
+		p.mu.Unlock()
+		p.recordUpstreamFailure(upstreamFailureQuota, "smartfriend-bypass="+detail, usedKey)
+		p.log("★ SmartFriend 已开启，忽略额度耗尽判定: %s...", usedKey[:minStr(12, len(usedKey))])
+		return ""
+	}
 	if state := p.keyStates[usedKey]; state != nil {
 		state.markExhausted()
 	}
@@ -1761,6 +1772,22 @@ func (p *MitmProxy) handleRequest(req *http.Request, origHost string) {
 				pathTail, len(injected)-len(newBody),
 				p.jailbreakStats.totalInjects.Load(),
 				p.jailbreakStats.snapshot().TodayInjects)
+		}
+	}
+
+	// F7-REMOVAL: 下面整个 if sfEnabled && isChatPath(path) 块删除
+	// ★ SmartFriend F7 patch: CASCADE(5) → SMART_FRIEND(13)
+	p.mu.RLock()
+	sfEnabled := p.smartFriendEnabled
+	p.mu.RUnlock()
+	if sfEnabled && isChatPath(path) {
+		curBody, _ := io.ReadAll(req.Body)
+		if patched, ok := PatchF7ToSmartFriend(curBody); ok {
+			req.Body = io.NopCloser(bytes.NewReader(patched))
+			req.ContentLength = int64(len(patched))
+			p.log("SmartFriend F7 patch: %s (+%dB)", pathTail, len(patched)-len(curBody))
+		} else {
+			req.Body = io.NopCloser(bytes.NewReader(curBody))
 		}
 	}
 

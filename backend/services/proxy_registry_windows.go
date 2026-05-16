@@ -34,6 +34,26 @@ func AddProxyOverride() error {
 	return k.SetStringValue(proxyOverrideValue, existing)
 }
 
+// HasProxyOverride 检查 IE/系统代理白名单中是否仍含本工具注册的任一目标域名。
+// shouldCleanupMitmEnvironment 用它判断是否需要在退出时跑 RemoveProxyOverride。
+func HasProxyOverride() bool {
+	k, err := registry.OpenKey(registry.CURRENT_USER, internetSettingsKey, registry.QUERY_VALUE)
+	if err != nil {
+		return false
+	}
+	defer k.Close()
+	existing, _, err := k.GetStringValue(proxyOverrideValue)
+	if err != nil {
+		return false
+	}
+	for _, domain := range hostsTargets {
+		if strings.Contains(existing, domain) {
+			return true
+		}
+	}
+	return false
+}
+
 // RemoveProxyOverride 从 ProxyOverride 移除我们添加的域名
 func RemoveProxyOverride() error {
 	k, err := registry.OpenKey(registry.CURRENT_USER, internetSettingsKey, registry.QUERY_VALUE|registry.SET_VALUE)

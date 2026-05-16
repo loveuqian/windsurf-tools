@@ -1,4 +1,4 @@
-﻿package services
+package services
 
 import (
 	"bytes"
@@ -986,6 +986,41 @@ func TestHandleResponseStreamQuotaExhaustedRotatesImmediately(t *testing.T) {
 		t.Fatalf("old key state = %#v, want runtime exhausted", state)
 	}
 	// ★ MITM 模式不再注入 codeium config（IDE 保持 Pro key 身份）
+}
+
+func TestHandleResponseStreamQuotaExhaustedSmartFriendBypass(t *testing.T) {
+	proxy := NewMitmProxy(nil, nil, "", nil)
+	proxy.SetSmartFriendEnabled(true)
+	proxy.poolKeys = []string{"sk-ws-a", "sk-ws-b"}
+	proxy.keyStates["sk-ws-a"] = &PoolKeyState{APIKey: "sk-ws-a", Healthy: true, JWT: []byte("jwt-a")}
+	proxy.keyStates["sk-ws-b"] = &PoolKeyState{APIKey: "sk-ws-b", Healthy: true, JWT: []byte("jwt-b")}
+
+	req, err := http.NewRequest(http.MethodPost, "https://server.self-serve.windsurf.com/exa.api_server_pb.ApiServerService/GetChatMessage", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	req.Header.Set("Content-Type", "application/grpc")
+	req.Header.Set("X-Pool-Key-Used", "sk-ws-a")
+
+	resp := &http.Response{
+		StatusCode:    200,
+		ContentLength: -1,
+		Body:          io.NopCloser(bytes.NewBufferString("stream-prefix included usage quota is exhausted stream-suffix")),
+		Header:        make(http.Header),
+		Request:       req,
+	}
+
+	proxy.handleResponse(resp)
+	if _, err := io.ReadAll(resp.Body); err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+
+	if got := proxy.CurrentAPIKey(); got != "sk-ws-a" {
+		t.Fatalf("CurrentAPIKey() = %q, want original sk-ws-a", got)
+	}
+	if state := proxy.keyStates["sk-ws-a"]; state == nil || state.RuntimeExhausted {
+		t.Fatalf("old key state = %#v, want not runtime exhausted", state)
+	}
 }
 
 func TestHandleResponseStreamTrailerQuotaExhaustedRotatesImmediately(t *testing.T) {

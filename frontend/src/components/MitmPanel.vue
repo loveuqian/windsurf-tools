@@ -359,7 +359,7 @@ const handleTeardown = async () => {
 
 <template>
   <div
-    class="ios-glass rounded-[28px] border border-black/[0.05] dark:border-white/[0.06] overflow-hidden shadow-[0_20px_48px_-20px_rgba(15,23,42,0.28)]"
+    class="ios-glass rounded-ios-card border border-black/[0.05] dark:border-white/[0.06] overflow-hidden shadow-[0_20px_48px_-20px_rgba(15,23,42,0.28)]"
   >
     <div
       class="border-b border-black/[0.05] dark:border-white/[0.06] bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.14),transparent_35%),linear-gradient(180deg,rgba(255,255,255,0.82),rgba(255,255,255,0.68))] px-6 py-5 dark:bg-[radial-gradient(circle_at_top_left,rgba(96,165,250,0.18),transparent_35%),linear-gradient(180deg,rgba(28,28,30,0.94),rgba(28,28,30,0.84))]"
@@ -405,7 +405,7 @@ const handleTeardown = async () => {
 
         <div class="grid grid-cols-2 gap-2 text-right sm:grid-cols-5">
           <div
-            class="rounded-[16px] bg-white/80 px-3 py-2 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/[0.05] dark:ring-white/[0.06]"
+            class="rounded-ios-block bg-white/80 px-3 py-2 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/[0.05] dark:ring-white/[0.06]"
           >
             <div
               class="text-[10px] font-bold uppercase tracking-[0.18em] text-ios-textSecondary dark:text-ios-textSecondaryDark"
@@ -419,7 +419,7 @@ const handleTeardown = async () => {
             </div>
           </div>
           <div
-            class="rounded-[16px] bg-white/80 px-3 py-2 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/[0.05] dark:ring-white/[0.06]"
+            class="rounded-ios-block bg-white/80 px-3 py-2 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/[0.05] dark:ring-white/[0.06]"
           >
             <div
               class="text-[10px] font-bold uppercase tracking-[0.18em] text-ios-textSecondary dark:text-ios-textSecondaryDark"
@@ -433,7 +433,7 @@ const handleTeardown = async () => {
             </div>
           </div>
           <div
-            class="rounded-[16px] bg-white/80 px-3 py-2 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/[0.05] dark:ring-white/[0.06]"
+            class="rounded-ios-block bg-white/80 px-3 py-2 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/[0.05] dark:ring-white/[0.06]"
           >
             <div
               class="text-[10px] font-bold uppercase tracking-[0.18em] text-ios-textSecondary dark:text-ios-textSecondaryDark"
@@ -447,7 +447,7 @@ const handleTeardown = async () => {
             </div>
           </div>
           <div
-            class="rounded-[16px] bg-white/80 px-3 py-2 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/[0.05] dark:ring-white/[0.06]"
+            class="rounded-ios-block bg-white/80 px-3 py-2 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/[0.05] dark:ring-white/[0.06]"
           >
             <div
               class="text-[10px] font-bold uppercase tracking-[0.18em] text-violet-600 dark:text-violet-300"
@@ -461,7 +461,7 @@ const handleTeardown = async () => {
             </div>
           </div>
           <div
-            class="rounded-[16px] bg-white/80 px-3 py-2 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/[0.05] dark:ring-white/[0.06]"
+            class="rounded-ios-block bg-white/80 px-3 py-2 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/[0.05] dark:ring-white/[0.06]"
           >
             <div
               class="text-[10px] font-bold uppercase tracking-[0.18em] text-ios-textSecondary dark:text-ios-textSecondaryDark"
@@ -481,7 +481,7 @@ const handleTeardown = async () => {
     <SkeletonOverlay
       :active="panelBusy"
       label="MITM 面板处理中"
-      overlayClass="rounded-b-[28px] bg-white/40 p-0 backdrop-blur-[2px] dark:bg-[#1C1C1E]/40"
+      overlayClass="rounded-b-ios-card bg-white/40 p-0 backdrop-blur-[2px] dark:bg-[#1C1C1E]/40"
     >
       <div class="space-y-5 p-6">
         <div
@@ -606,7 +606,7 @@ const handleTeardown = async () => {
             <div
               v-for="(event, index) in recentEvents"
               :key="`${event.at || 'mitm'}-${index}`"
-              class="rounded-[16px] border px-3 py-2.5"
+              class="rounded-ios-block border px-3 py-2.5"
               :class="recentEventToneClass(event.tone)"
             >
               <div class="flex items-start justify-between gap-3">
@@ -862,7 +862,7 @@ const handleTeardown = async () => {
             <div
               v-for="k in status!.pool_status"
               :key="k.key_hash || k.key_short"
-              class="flex items-center justify-between gap-3 rounded-[16px] border px-3 py-2.5 text-[12px] font-mono transition-all"
+              class="flex items-center justify-between gap-3 rounded-ios-block border px-3 py-2.5 text-[12px] font-mono transition-all"
               :class="{
                 'border-emerald-500/15 bg-emerald-500/[0.07]':
                   k.is_current && k.healthy && !k.runtime_exhausted,
@@ -970,7 +970,7 @@ const handleTeardown = async () => {
 
         <button
           type="button"
-          class="no-drag-region flex w-full items-center justify-center gap-2 rounded-[16px] border border-rose-500/12 bg-rose-500/[0.06] px-4 py-3 text-[12px] font-semibold text-rose-700 transition-colors ios-btn hover:bg-rose-500/[0.11] disabled:opacity-50 dark:text-rose-300"
+          class="no-drag-region flex w-full items-center justify-center gap-2 rounded-ios-block border border-rose-500/12 bg-rose-500/[0.06] px-4 py-3 text-[12px] font-semibold text-rose-700 transition-colors ios-btn hover:bg-rose-500/[0.11] disabled:opacity-50 dark:text-rose-300"
           :disabled="loading"
           @click="handleTeardown"
         >

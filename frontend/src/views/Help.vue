@@ -122,7 +122,7 @@ const toggleChapter = (id: string) => {
         v-model="searchQuery"
         type="search"
         placeholder="搜索章节…"
-        class="no-drag-region w-full pl-11 pr-4 py-3 rounded-[16px] bg-white dark:bg-[#1C1C1E] border border-black/[0.06] dark:border-white/[0.08] text-[14px] outline-none focus:ring-2 focus:ring-ios-blue/30 transition-shadow"
+        class="no-drag-region w-full pl-11 pr-4 py-3 rounded-ios-block bg-white dark:bg-[#1C1C1E] border border-black/[0.06] dark:border-white/[0.08] text-[14px] outline-none focus:ring-2 focus:ring-ios-blue/30 transition-shadow"
       />
     </div>
 
@@ -359,7 +359,7 @@ const toggleChapter = (id: string) => {
 
     <!-- 提示 -->
     <div
-      class="mt-8 rounded-[16px] border border-ios-blue/15 bg-ios-blue/[0.06] p-4 text-[12.5px] text-ios-blue dark:text-blue-300 flex items-start gap-2"
+      class="mt-8 rounded-ios-block border border-ios-blue/15 bg-ios-blue/[0.06] p-4 text-[12.5px] text-ios-blue dark:text-blue-300 flex items-start gap-2"
     >
       <HelpCircle class="w-5 h-5 shrink-0 mt-0.5" stroke-width="2.3" />
       <div class="leading-relaxed">

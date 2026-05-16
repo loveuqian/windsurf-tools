@@ -38,9 +38,14 @@ func injectCodeiumConfigWithHomeDir(homeDir, apiKey string) error {
 	configPath := filepath.Join(dir, "config.json")
 	backupPath := filepath.Join(dir, "config.json.bak")
 
-	// 备份原始文件
-	if data, err := os.ReadFile(configPath); err == nil {
-		_ = os.WriteFile(backupPath, data, 0644)
+	// 备份原始文件 —— 仅当 backup 不存在时才备份。
+	// 重要：本工具会随切号反复 inject，第二次 inject 时 configPath 已经
+	// 是「带上次注入的 key」的状态，**不能**用它覆盖 backup。这样
+	// RestoreCodeiumConfig 才能把用户的真实原始配置还原回来。
+	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+		if data, err := os.ReadFile(configPath); err == nil {
+			_ = os.WriteFile(backupPath, data, 0644)
+		}
 	}
 
 	// 读取或创建新的配置
@@ -77,6 +82,19 @@ func robustWriteFile(filePath string, data []byte) error {
 		return writeFileViaPowerShell(filePath, data)
 	}
 	return fmt.Errorf("写入 %s 失败（所有方式均失败）", filepath.Base(filePath))
+}
+
+// HasCodeiumConfigBackup 检查 ~/.codeium/config.json.bak 是否存在。
+// shouldCleanupMitmEnvironment 用它判断是否需要在退出时跑 RestoreCodeiumConfig：
+// 即使 hosts/CA 都被外部清理了，只要 backup 还在就说明 ~/.codeium/config.json
+// 仍是被注入过的状态，必须恢复。
+func HasCodeiumConfigBackup() bool {
+	dir, err := codeiumConfigDir()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(filepath.Join(dir, "config.json.bak"))
+	return err == nil
 }
 
 // RestoreCodeiumConfig 恢复 ~/.codeium/config.json

@@ -63,21 +63,5 @@ func TestRunDiagnostics_StatusEnumeration(t *testing.T) {
 	}
 }
 
-func TestIntToStr(t *testing.T) {
-	cases := map[int]string{
-		0: "0", 1: "1", 9: "9", 10: "10", 100: "100",
-		42: "42", -7: "-7", -100: "-100",
-	}
-	for n, want := range cases {
-		if got := intToStr(n); got != want {
-			t.Errorf("intToStr(%d) = %q, want %q", n, got, want)
-		}
-	}
-}
-
-func TestWindsurfCandidatesByOS_NotEmpty(t *testing.T) {
-	cands := windsurfCandidatesByOS()
-	if len(cands) == 0 {
-		t.Error("应返回至少 1 个候选路径（即使 OS 不识别）")
-	}
-}
+// intToStr / windsurfCandidatesByOS 的内部测试已随实现迁到
+// backend/app/diagnose 子包内（package diagnose 内部 _test.go）。

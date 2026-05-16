@@ -58,6 +58,7 @@ export function createDefaultSettings(): models.Settings {
     debug_log: false,
     import_concurrency: 3,
     forge_enabled: false,
+    smart_friend_enabled: false, // F7-REMOVAL: 字段与下方 3 处同名赋值一并删除
     static_cache_intercept: true,
     mitm_jailbreak_enabled: false,
     mitm_jailbreak_override: '',
@@ -119,6 +120,8 @@ export function normalizeSettings(raw: unknown): models.Settings {
     debug_log: 'debug_log' in s ? Boolean(s.debug_log) : false,
     import_concurrency: Math.max(1, Math.min(20, Number(s.import_concurrency) || 3)),
     forge_enabled: 'forge_enabled' in s ? Boolean(s.forge_enabled) : false,
+    // F7-REMOVAL: 下一行删除
+    smart_friend_enabled: 'smart_friend_enabled' in s ? Boolean(s.smart_friend_enabled) : false,
     static_cache_intercept: 'static_cache_intercept' in s ? Boolean(s.static_cache_intercept) : true,
     mitm_jailbreak_enabled: 'mitm_jailbreak_enabled' in s ? Boolean(s.mitm_jailbreak_enabled) : false,
     mitm_jailbreak_override: String(s.mitm_jailbreak_override ?? ''),
@@ -259,6 +262,8 @@ export type SettingsForm = {
   import_concurrency: number
   /** GetUserStatus/GetPlanStatus 伪造为 Enterprise + 无限积分 */
   forge_enabled: boolean
+  /** F7-REMOVAL: 下两行删除。SmartFriend 仅作者自用，发布前不保留字段。 */
+  smart_friend_enabled: boolean
   /** 静态响应缓存拦截 (.bin 文件直返) */
   static_cache_intercept: boolean
   /** 破限注入：MITM 在 chat F2 system prompt 末尾追加 override 文本 */
@@ -314,6 +319,8 @@ export function settingsToForm(s: models.Settings): SettingsForm {
     debug_log: s.debug_log === true,
     import_concurrency: Math.max(1, Math.min(20, Number(s.import_concurrency) || 3)),
     forge_enabled: s.forge_enabled === true,
+    // F7-REMOVAL: 下一行删除
+    smart_friend_enabled: s.smart_friend_enabled === true,
     static_cache_intercept: s.static_cache_intercept !== false,
     mitm_jailbreak_enabled: s.mitm_jailbreak_enabled === true,
     mitm_jailbreak_override: String(s.mitm_jailbreak_override ?? ''),
@@ -363,6 +370,8 @@ export function formToSettings(form: SettingsForm): models.Settings {
     debug_log: form.debug_log,
     import_concurrency: Math.max(1, Math.min(20, Math.round(form.import_concurrency) || 3)),
     forge_enabled: form.forge_enabled,
+    // F7-REMOVAL: 下一行删除
+    smart_friend_enabled: form.smart_friend_enabled,
     static_cache_intercept: form.static_cache_intercept,
     mitm_jailbreak_enabled: form.mitm_jailbreak_enabled,
     mitm_jailbreak_override: (form.mitm_jailbreak_override ?? '').trim(),

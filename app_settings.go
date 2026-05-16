@@ -48,6 +48,8 @@ func (a *App) UpdateSettings(settings models.Settings) error {
 	a.syncForgeConfig()
 	a.syncStaticCacheConfig()
 	a.syncJailbreakConfig()
+	// F7-REMOVAL: 下一行删除
+	a.syncSmartFriendConfig()
 	a.applyClashRotatorSettings()
 	a.applyRotationPoolSettings()
 	// 动态切换调试日志

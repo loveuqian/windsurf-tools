@@ -9,6 +9,15 @@ import (
 )
 
 // SwitchAccountLocal writes the selected account into local Windsurf auth state.
+//
+// 用户在 UI 上明确点击「写入本地登录态」按钮 → 即使该账号当前快照里
+// 额度已耗尽，也应允许写入：
+//   - SmartFriend(F7) 模式下服务端按 SMART_FRIEND 计费、绕过日/周限额，
+//     「耗尽」实际仍可用；
+//   - 非 SmartFriend 下用户也可能预先把账号写好等额度重置，或不信任
+//     我们本地快照的耗尽判断。
+//
+// 因此走 prepareAccountForUsageManual，仅校验凭证可用性，不做额度拦截。
 func (a *App) SwitchAccountLocal(id string) (string, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -22,7 +31,7 @@ func (a *App) SwitchAccountLocal(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	prepared, err := a.prepareAccountForUsage(acc)
+	prepared, err := a.prepareAccountForUsageManual(acc)
 	if err != nil {
 		return "", err
 	}

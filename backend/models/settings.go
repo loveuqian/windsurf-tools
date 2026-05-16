@@ -42,6 +42,11 @@ type Settings struct {
 	// MitmFullCapture 开启后，全量记录 MITM 代理的所有请求/响应到 capture/ 目录（JSONL + body 文件）
 	MitmFullCapture bool `json:"mitm_full_capture"`
 
+	// F7-REMOVAL: 下方整段（注释 + SmartFriendEnabled 字段）删除，删除时同步清理后端各处 if SmartFriendEnabled 分支
+	// ── SmartFriend 模式（F7 patch） ──
+	// SmartFriendEnabled 开启后，GetChatMessage 请求的 F7 varint 从 CASCADE(5) 改为 SMART_FRIEND(13)，绕过日/周额度限制
+	SmartFriendEnabled bool `json:"smart_friend_enabled"`
+
 	// ── 静态响应缓存 ──
 	StaticCacheIntercept bool `json:"static_cache_intercept"`
 
@@ -127,6 +132,7 @@ func DefaultSettings() Settings {
 		SilentStart:                 false,
 		MitmDebugDump:               false,
 		MitmFullCapture:             false,
+		SmartFriendEnabled:          false,
 		StaticCacheIntercept:        true,
 		MitmJailbreakEnabled:        false,
 		MitmJailbreakOverride:       "", // 空表示用 services.DefaultJailbreakOverride

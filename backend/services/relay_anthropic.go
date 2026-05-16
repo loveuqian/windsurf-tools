@@ -121,8 +121,10 @@ func (r *OpenAIRelay) handleAnthropicMessages(w http.ResponseWriter, req *http.R
 
 		r.proxy.mu.RLock()
 		anthFP := r.proxy.keyFingerprint(apiKey)
+		// F7-REMOVAL: 下一行 smartFriend 读取删除；下面调用改回 BuildChatRequestWithModel(...) 不传 smartFriend
+		smartFriend := r.proxy.smartFriendEnabled
 		r.proxy.mu.RUnlock()
-		protoBody := BuildChatRequestWithModel(chatMessages, apiKey, jwtStr, "", anthReq.Model, anthFP)
+		protoBody := buildChatRequestWithModelMode(chatMessages, apiKey, jwtStr, "", anthReq.Model, anthFP, smartFriend)
 		// Connect 协议：直接发送 protobuf body（无 envelope）
 		resp, kind, err := r.sendGRPC(protoBody, apiKey, jwtStr)
 		if err != nil {

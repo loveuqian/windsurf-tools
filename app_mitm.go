@@ -18,20 +18,24 @@ import (
 // syncMitmPoolKeys syncs pool keys from store accounts that have WindsurfAPIKey.
 // ★ 遵守 AutoSwitchPlanFilter 设置：只有计划匹配的账号才加入 MITM 号池
 // ★ 传入 Plan 信息，使 MITM 代理能区分 Pro/Trial key（用于全局限速退避时优先 Pro）
+// F7-REMOVAL: 下面 SmartFriend 三行注释 + 下面 settings.SmartFriendEnabled 传参一并删除
+// ★ SmartFriend(F7) 开启时，服务端按 SMART_FRIEND 计费、绕过日/周限额，
+//    「显示已耗尽」的账号实际仍可用，必须保留在号池里——否则手动切号会
+//    因「号池找不到 key」而失败。
 func (a *App) syncMitmPoolKeys() {
 	accounts := a.store.GetAllAccounts()
 	settings := a.store.GetSettings()
 	filter := settings.AutoSwitchPlanFilter
 
-	infos := collectEligibleMitmPoolKeyInfos(accounts, filter)
+	infos := collectEligibleMitmPoolKeyInfos(accounts, filter, settings.SmartFriendEnabled)
 	a.mitmProxy.SetPoolKeysWithPlan(infos)
 }
 
-func collectEligibleMitmPoolKeyInfos(accounts []models.Account, planFilter string) []services.PoolKeyInput {
+func collectEligibleMitmPoolKeyInfos(accounts []models.Account, planFilter string, bypassQuota bool) []services.PoolKeyInput {
 	var infos []services.PoolKeyInput
 	seen := make(map[string]struct{})
 	for _, acc := range accounts {
-		if !accountEligibleForUsage(&acc, planFilter, true) {
+		if !accountEligibleForUsage(&acc, planFilter, true, bypassQuota) {
 			continue
 		}
 		key := strings.TrimSpace(acc.WindsurfAPIKey)
@@ -51,8 +55,8 @@ func collectEligibleMitmPoolKeyInfos(accounts []models.Account, planFilter strin
 }
 
 // collectEligibleMitmAPIKeys returns just the API key strings (backward compat wrapper).
-func collectEligibleMitmAPIKeys(accounts []models.Account, planFilter string) []string {
-	infos := collectEligibleMitmPoolKeyInfos(accounts, planFilter)
+func collectEligibleMitmAPIKeys(accounts []models.Account, planFilter string, bypassQuota bool) []string {
+	infos := collectEligibleMitmPoolKeyInfos(accounts, planFilter, bypassQuota)
 	keys := make([]string, 0, len(infos))
 	for _, info := range infos {
 		keys = append(keys, info.APIKey)
@@ -103,7 +107,7 @@ func (a *App) SwitchMitmToNext() (string, error) {
 	a.syncMitmPoolKeys()
 	accounts := a.store.GetAllAccounts()
 	currentID := findAccountIDForMITMAPIKey(accounts, a.mitmProxy.CurrentAPIKey())
-	nextAcc, err := pickNextMitmSwitchableAccount(accounts, currentID, a.store.GetSettings().AutoSwitchPlanFilter)
+	nextAcc, err := pickNextMitmSwitchableAccount(accounts, currentID, a.store.GetSettings().AutoSwitchPlanFilter, a.shouldBypassQuotaCheck())
 	if err != nil {
 		return "", fmt.Errorf("MITM 号池为空，或当前没有可切换的席位")
 	}
@@ -311,35 +315,50 @@ func prereqHostsHint(err error) string {
 }
 
 // TeardownMitm removes hosts entry, cleans ProxyOverride, restores Codeium config, and uninstalls CA.
+//
+// 子步骤幂等：每步先检测状态再决定是否执行，避免重复关闭软件 / 重复
+// onBeforeClose+OnShutdown 时多弹一次密码框 / 多吃一次 "not found" 错误。
 func (a *App) TeardownMitm() error {
 	var errs []error
 
-	// 停止 MITM 代理（macOS: 此步骤内含 DisablePFRedirect，跳过以避免额外密码弹窗）
+	// 停止 MITM 代理（macOS: 此步骤内含 DisablePFRedirect，跳过以避免额外密码弹窗）。
+	// 已停止的代理重复 Stop 是 no-op，安全。
 	if a.mitmProxy != nil {
 		if err := a.mitmProxy.Stop(); err != nil {
 			errs = append(errs, fmt.Errorf("停止 MITM 代理: %w", err))
 		}
 	}
 
-	// 非特权操作先做
-	if err := services.RemoveProxyOverride(); err != nil {
-		errs = append(errs, fmt.Errorf("恢复 ProxyOverride: %w", err))
+	// 非特权操作先做（每个都自带 "已经清理过" 的快速返回）
+	if services.HasProxyOverride() {
+		if err := services.RemoveProxyOverride(); err != nil {
+			errs = append(errs, fmt.Errorf("恢复 ProxyOverride: %w", err))
+		}
 	}
-	if err := services.RestoreCodeiumConfig(); err != nil {
-		errs = append(errs, fmt.Errorf("恢复 Codeium 配置: %w", err))
+	if services.HasCodeiumConfigBackup() {
+		if err := services.RestoreCodeiumConfig(); err != nil {
+			errs = append(errs, fmt.Errorf("恢复 Codeium 配置: %w", err))
+		}
 	}
 
-	// macOS: 合并所有特权操作为一次密码弹窗（恢复 hosts + 卸载 CA + 恢复 pf）
+	// macOS: 合并所有特权操作为一次密码弹窗（恢复 hosts + 卸载 CA）。
+	// 当 hosts 与 CA 都已被外部清理时跳过，避免无意义弹窗。
 	if runtime.GOOS == "darwin" {
-		if err := services.DarwinBatchTeardown(); err != nil {
-			errs = append(errs, err)
+		if services.IsHostsMapped(services.TargetDomain) || services.IsCAInstalled() {
+			if err := services.DarwinBatchTeardown(); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	} else {
-		if err := services.RemoveHostsEntry(services.TargetDomain); err != nil {
-			errs = append(errs, fmt.Errorf("恢复 hosts: %w", err))
+		if services.IsHostsMapped(services.TargetDomain) {
+			if err := services.RemoveHostsEntry(services.TargetDomain); err != nil {
+				errs = append(errs, fmt.Errorf("恢复 hosts: %w", err))
+			}
 		}
-		if err := services.UninstallCA(); err != nil {
-			errs = append(errs, fmt.Errorf("卸载 CA: %w", err))
+		if services.IsCAInstalled() {
+			if err := services.UninstallCA(); err != nil {
+				errs = append(errs, fmt.Errorf("卸载 CA: %w", err))
+			}
 		}
 	}
 
@@ -360,7 +379,7 @@ func (a *App) applyMitmSystemSetup() {
 
 // injectFirstPoolKeyToCodeiumConfig 将号池中第一个可用 API Key 写入 Codeium config
 func (a *App) injectFirstPoolKeyToCodeiumConfig() {
-	keys := collectEligibleMitmAPIKeys(a.store.GetAllAccounts(), a.store.GetSettings().AutoSwitchPlanFilter)
+	keys := collectEligibleMitmAPIKeys(a.store.GetAllAccounts(), a.store.GetSettings().AutoSwitchPlanFilter, a.shouldBypassQuotaCheck())
 	if len(keys) == 0 {
 		return
 	}
@@ -499,7 +518,10 @@ func (a *App) handleMitmCurrentKeyChanged(apiKey, reason string) {
 }
 
 func (a *App) switchMitmAccountAndSyncLocalSession(acc models.Account) (string, error) {
-	prepared, err := a.prepareAccountForUsage(acc)
+	// 用户在 UI 上明确选定该账号 → 即使额度耗尽也允许切过去。
+	// SmartFriend 模式下「耗尽」其实仍可用；非 SmartFriend 下用户也可能想
+	// 提前预定该号(等额度重置)或忽略我们的快照判断。
+	prepared, err := a.prepareAccountForUsageManual(acc)
 	if err != nil {
 		return "", err
 	}
@@ -514,6 +536,15 @@ func (a *App) switchMitmAccountAndSyncLocalSession(acc models.Account) (string, 
 	}
 	utils.DLog("[MITM] 手动切号成功: %s", prepared.Email)
 	return a.describeMitmKey(apiKey), nil
+}
+
+// F7-REMOVAL: 整函数删除。调用点在 app.go / app_settings.go 中同步去掉。
+func (a *App) syncSmartFriendConfig() {
+	if a.mitmProxy == nil || a.store == nil {
+		return
+	}
+	s := a.store.GetSettings()
+	a.mitmProxy.SetSmartFriendEnabled(s.SmartFriendEnabled)
 }
 
 func (a *App) syncForgeConfig() {

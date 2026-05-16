@@ -55,6 +55,10 @@ type ClashRotator struct {
 	lastIdx   int
 	lastRLAt  time.Time
 	lastNode  string
+	// originalNode 在 Start 时捕获 selector 组的当前节点，Stop 时用于恢复。
+	// 空串 = 未捕获到（探活失败 / Stop 也跳过恢复）。
+	// 行为目标：用户启用 IP 轮换 → 关闭软件 / 关掉开关后，组应回到启动时的状态。
+	originalNode string
 
 	// metrics（无锁原子）
 	rotations uint64
@@ -103,6 +107,11 @@ func (r *ClashRotator) Stats() (rotations, failures uint64, lastNode string) {
 }
 
 // Start 启动后台循环。重复调用安全。
+//
+// 副作用：捕获当前 selector 组的「原始节点」存到 r.originalNode，
+//
+//	Stop 时用于把组恢复回启动前的状态。
+//	拉取失败时只 log，不阻塞启动；Stop 也会因 originalNode 为空跳过恢复。
 func (r *ClashRotator) Start() {
 	r.mu.Lock()
 	if r.running {
@@ -113,12 +122,28 @@ func (r *ClashRotator) Start() {
 	r.stopCh = make(chan struct{})
 	r.triggerCh = make(chan string, 4)
 	r.mu.Unlock()
+
+	// 捕获原始节点（best-effort）。在主线程同步拉一次，避免与 loop 内首次切换竞争。
+	if r.cfg.Group != "" {
+		if _, current, err := r.listGroupNodes(r.cfg.Group); err == nil && current != "" {
+			r.mu.Lock()
+			r.originalNode = current
+			r.mu.Unlock()
+			r.log("已记录原始节点: %s（关闭轮换时将恢复）", current)
+		} else if err != nil {
+			r.log("记录原始节点失败（关闭时无法恢复）: %v", err)
+		}
+	}
+
 	go r.loop()
 	r.log("已启动: controller=%s group=%q interval=%s rl_trigger=%v",
 		r.cfg.ControllerURL, r.cfg.Group, r.cfg.Interval, r.cfg.RotateOnRL)
 }
 
-// Stop 停止循环。
+// Stop 停止循环并把 selector 组恢复到 Start 时的原始节点。
+//
+//	恢复是 best-effort：失败 log 不抛错；originalNode 为空（Start 时拉取失败）
+//	或与当前节点已经一致时跳过 PUT。
 func (r *ClashRotator) Stop() {
 	r.mu.Lock()
 	if !r.running {
@@ -127,7 +152,23 @@ func (r *ClashRotator) Stop() {
 	}
 	r.running = false
 	close(r.stopCh)
+	original := r.originalNode
+	group := r.cfg.Group
+	r.originalNode = ""
 	r.mu.Unlock()
+
+	// 恢复原始节点（best-effort）。
+	if original != "" && group != "" {
+		// 拉一次当前节点，已经一致就跳过 PUT。
+		if _, current, err := r.listGroupNodes(group); err == nil && current == original {
+			r.log("已停止；当前节点与原始节点一致 (%s)，无需恢复", original)
+		} else if err := r.switchTo(group, original); err != nil {
+			r.log("已停止；恢复原始节点失败 %s: %v", original, err)
+		} else {
+			r.log("已停止；✓ 已恢复原始节点: %s", original)
+		}
+		return
+	}
 	r.log("已停止")
 }
 

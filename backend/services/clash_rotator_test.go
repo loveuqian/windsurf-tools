@@ -182,6 +182,100 @@ func TestRotator_BasicRotateOnInterval(t *testing.T) {
 	}
 }
 
+// TestRotator_StopRestoresOriginalNode 验证：rotator 启动时记录原节点，
+// 关闭时把 selector 组切回原节点。这是「关闭软件 → Clash 默认值还原」的
+// 直接体现：之前用户开了 IP 轮换关掉后，组停留在最后一次切到的节点；
+// 修复后必须 PUT 一次把组恢复到 Start 时的状态。
+func TestRotator_StopRestoresOriginalNode(t *testing.T) {
+	m := newMockClashServer(t, []string{"US-1", "US-2", "JP-1"}, "US-1")
+	srv := httptest.NewServer(m.handler())
+	defer srv.Close()
+
+	fp := &fakeProxy{}
+	cfg := ClashRotatorConfig{
+		ControllerURL:   srv.URL,
+		Group:           "PROXY",
+		Whitelist:       []string{"US-1", "US-2"},
+		Interval:        2 * time.Minute,
+		IdleWaitMax:     200 * time.Millisecond,
+		LatencyMaxMs:    0,
+		RateLimitMinGap: 1 * time.Millisecond,
+	}
+	r := NewClashRotator(cfg, fp, func(string) {})
+	r.Start()
+
+	// 手动切一次，使 m.now 偏离原节点
+	r.TriggerRotate("manual")
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		m.mu.Lock()
+		n := m.now
+		m.mu.Unlock()
+		if n != "US-1" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	m.mu.Lock()
+	switched := m.now
+	putsAfterRotate := len(m.puts)
+	m.mu.Unlock()
+	if switched == "US-1" {
+		t.Fatalf("rotate didn't change current node, still US-1")
+	}
+	if putsAfterRotate != 1 {
+		t.Fatalf("expected 1 PUT after rotate, got %d", putsAfterRotate)
+	}
+
+	// Stop 应再 PUT 一次把组切回 US-1
+	r.Stop()
+
+	m.mu.Lock()
+	puts := append([]string{}, m.puts...)
+	now := m.now
+	m.mu.Unlock()
+
+	if now != "US-1" {
+		t.Fatalf("Stop didn't restore original node: now=%q, want US-1", now)
+	}
+	if len(puts) != 2 {
+		t.Fatalf("expected 2 PUTs (rotate + restore), got %d: %v", len(puts), puts)
+	}
+	if puts[len(puts)-1] != "US-1" {
+		t.Fatalf("last PUT should restore to US-1, got %q", puts[len(puts)-1])
+	}
+}
+
+// TestRotator_StopSkipsRestoreWhenAlreadyOriginal 验证：rotator Start 后没有
+// 实际触发过任何切换（manual/interval/rate_limit 都没来），Stop 时 m.now
+// 仍是 originalNode，应跳过 PUT 不做无意义的网络调用。
+func TestRotator_StopSkipsRestoreWhenAlreadyOriginal(t *testing.T) {
+	m := newMockClashServer(t, []string{"US-1", "US-2"}, "US-1")
+	srv := httptest.NewServer(m.handler())
+	defer srv.Close()
+
+	fp := &fakeProxy{}
+	cfg := ClashRotatorConfig{
+		ControllerURL:   srv.URL,
+		Group:           "PROXY",
+		Whitelist:       []string{"US-1", "US-2"},
+		Interval:        2 * time.Minute,
+		IdleWaitMax:     200 * time.Millisecond,
+		LatencyMaxMs:    0,
+		RateLimitMinGap: 1 * time.Millisecond,
+	}
+	r := NewClashRotator(cfg, fp, func(string) {})
+	r.Start()
+	r.Stop()
+
+	m.mu.Lock()
+	puts := append([]string{}, m.puts...)
+	m.mu.Unlock()
+	if len(puts) != 0 {
+		t.Fatalf("Stop without rotate should not PUT, got %v", puts)
+	}
+}
+
 func TestRotator_LatencyFilter(t *testing.T) {
 	m := newMockClashServer(t, []string{"FAST", "SLOW", "DEAD"}, "FAST")
 	m.setDelay("FAST", 100)

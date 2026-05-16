@@ -14,7 +14,7 @@ defineProps<{
     aria-label="加载中"
   >
     <div
-      class="ios-glass rounded-[28px] border border-black/[0.05] overflow-hidden dark:border-white/[0.08]"
+      class="ios-glass rounded-ios-card border border-black/[0.05] overflow-hidden dark:border-white/[0.08]"
     >
       <div class="border-b border-black/[0.05] p-6 dark:border-white/[0.08]">
         <div class="flex flex-wrap items-start justify-between gap-4">
@@ -69,9 +69,9 @@ defineProps<{
         >
           <SkeletonBlock class="h-4 w-24 rounded-lg" />
           <div class="mt-4 space-y-3">
-            <SkeletonBlock class="h-12 w-full rounded-[16px]" />
-            <SkeletonBlock class="h-12 w-full rounded-[16px]" />
-            <SkeletonBlock class="h-12 w-full rounded-[16px]" />
+            <SkeletonBlock class="h-12 w-full rounded-ios-block" />
+            <SkeletonBlock class="h-12 w-full rounded-ios-block" />
+            <SkeletonBlock class="h-12 w-full rounded-ios-block" />
           </div>
         </div>
       </div>
@@ -118,7 +118,7 @@ defineProps<{
     aria-label="加载中"
   >
     <div
-      class="ios-glass rounded-[28px] border border-black/[0.05] overflow-hidden dark:border-white/[0.08]"
+      class="ios-glass rounded-ios-card border border-black/[0.05] overflow-hidden dark:border-white/[0.08]"
     >
       <div class="border-b border-black/[0.05] p-6 dark:border-white/[0.08]">
         <div class="flex flex-wrap items-start justify-between gap-4">
@@ -130,8 +130,8 @@ defineProps<{
             </div>
           </div>
           <div class="grid grid-cols-2 gap-2">
-            <SkeletonBlock class="h-16 w-24 rounded-[16px]" />
-            <SkeletonBlock class="h-16 w-24 rounded-[16px]" />
+            <SkeletonBlock class="h-16 w-24 rounded-ios-block" />
+            <SkeletonBlock class="h-16 w-24 rounded-ios-block" />
           </div>
         </div>
       </div>
@@ -252,15 +252,15 @@ defineProps<{
         <div class="grid grid-cols-1 gap-3 xl:grid-cols-[220px_minmax(0,1fr)_220px]">
           <div class="space-y-2">
             <SkeletonBlock class="h-3 w-12 rounded-lg" />
-            <SkeletonBlock class="h-12 w-full rounded-[16px]" />
+            <SkeletonBlock class="h-12 w-full rounded-ios-block" />
           </div>
           <div class="space-y-2">
             <SkeletonBlock class="h-3 w-12 rounded-lg" />
-            <SkeletonBlock class="h-12 w-full rounded-[16px]" />
+            <SkeletonBlock class="h-12 w-full rounded-ios-block" />
           </div>
           <div class="space-y-2">
             <SkeletonBlock class="h-3 w-12 rounded-lg" />
-            <SkeletonBlock class="h-12 w-full rounded-[16px]" />
+            <SkeletonBlock class="h-12 w-full rounded-ios-block" />
           </div>
         </div>
       </div>

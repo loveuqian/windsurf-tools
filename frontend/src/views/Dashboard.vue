@@ -5,9 +5,12 @@ import {
   AlertCircle,
   ArrowRight,
   CheckCircle2,
+  ChevronRight,
   Globe,
   KeyRound,
   Link2,
+  Play,
+  Plus,
   RefreshCcw,
   ShieldCheck,
   TriangleAlert,
@@ -16,14 +19,18 @@ import {
   XCircle,
 } from "lucide-vue-next";
 import { APIInfo } from "../api/wails";
-import { showToast } from "../utils/toast";
+import { showToast, showErrorToast } from "../utils/toast";
 import PageLoadingSkeleton from "../components/common/PageLoadingSkeleton.vue";
 import SkeletonOverlay from "../components/common/SkeletonOverlay.vue";
 import MitmPanel from "../components/MitmPanel.vue";
+// F7-REMOVAL: F7Banner / useSmartFriend 仅在 F7 模式下生效，发布前一并删除
+import F7Banner from "../components/F7Banner.vue";
+import { useSmartFriend } from "../composables/useSmartFriend";
 import { useAccountStore } from "../stores/useAccountStore";
 import { useMainViewStore } from "../stores/useMainViewStore";
 import { useMitmStatusStore } from "../stores/useMitmStatusStore";
 import { useRelayStatusStore } from "../stores/useRelayStatusStore";
+import { useSettingsStore } from "../stores/useSettingsStore";
 import {
   getAccountHealth,
   isWeeklyQuotaBlocked,
@@ -34,7 +41,11 @@ const accountStore = useAccountStore();
 const mainView = useMainViewStore();
 const mitmStore = useMitmStatusStore();
 const relayStore = useRelayStatusStore();
+const settingsStore = useSettingsStore();
 const refreshing = ref(false);
+
+// F7-REMOVAL: 整段 sf 与下方 4 处 sf.active.value 引用一并删除
+const sf = useSmartFriend();
 
 const fetchRelayStatus = async () => {
   await relayStore.fetchStatus(true);
@@ -98,7 +109,7 @@ const handleRunDiagnostics = async () => {
       showToast(`平台兼容性: 全部通过 ✓`, "success", 3000);
     }
   } catch (e) {
-    showToast(`诊断失败: ${String(e)}`, "error");
+    showErrorToast(e, "诊断失败");
   } finally {
     diagnosticsLoading.value = false;
   }
@@ -125,29 +136,33 @@ const booting = computed(
 );
 
 const totalAccounts = computed(() => accountStore.accounts.length);
-const healthyAccounts = computed(
-  () =>
-    accountStore.accounts.filter(
-      (account) => getAccountHealth(account) === "healthy",
-    ).length,
-);
-const criticalAccounts = computed(
-  () =>
-    accountStore.accounts.filter(
-      (account) => getAccountHealth(account) === "critical",
-    ).length,
-);
 const expiredAccounts = computed(
   () =>
     accountStore.accounts.filter(
       (account) => getAccountHealth(account) === "expired",
     ).length,
 );
-const blockedAccounts = computed(
-  () =>
-    accountStore.accounts.filter((account) => isWeeklyQuotaBlocked(account))
-      .length,
-);
+// F7-REMOVAL: 三个计数 if (sf.active.value) ... 分支删除即可，恢复纯统计逻辑
+const criticalAccounts = computed(() => {
+  if (sf.active.value) return 0;
+  return accountStore.accounts.filter(
+    (account) => getAccountHealth(account) === "critical",
+  ).length;
+});
+const blockedAccounts = computed(() => {
+  if (sf.active.value) return 0;
+  return accountStore.accounts.filter((account) =>
+    isWeeklyQuotaBlocked(account),
+  ).length;
+});
+const healthyAccounts = computed(() => {
+  if (sf.active.value) {
+    return Math.max(0, totalAccounts.value - expiredAccounts.value);
+  }
+  return accountStore.accounts.filter(
+    (account) => getAccountHealth(account) === "healthy",
+  ).length;
+});
 const activeKey = computed(
   () => mitmStore.status?.pool_status?.find((item) => item.is_current) ?? null,
 );
@@ -264,6 +279,103 @@ const nextSteps = computed(() => {
     "遇到异常时，先看最近代理事件和最近一次上游错误，再决定是否切去设置页调整策略。",
   ];
 });
+
+// ── 首次使用 onboarding 步骤(可点击) ──
+// 从「号池数 / CA / Hosts / MITM running」推导当前进度，
+// 每一步配 icon + 标题 + 描述 + 跳转动作；已完成的标 ✓，未完成的高亮当前步。
+type OnboardingStep = {
+  key: string;
+  index: number;
+  title: string;
+  description: string;
+  done: boolean;
+  current: boolean;
+  icon: typeof Plus;
+  cta: string;
+  onClick: () => void;
+};
+
+const onboardingSteps = computed<OnboardingStep[]>(() => {
+  const hasAccount = totalAccounts.value > 0;
+  const caReady = Boolean(mitmStore.status?.ca_installed);
+  const hostsReady = Boolean(mitmStore.status?.hosts_mapped);
+  const setupReady = caReady && hostsReady;
+  const mitmRunning = Boolean(mitmStore.status?.running);
+
+  // 当前步：第一个 done=false 的步
+  const stepsRaw: Omit<OnboardingStep, "current">[] = [
+    {
+      key: "import",
+      index: 1,
+      title: "导入账号到号池",
+      description: hasAccount
+        ? `已有 ${totalAccounts.value} 个账号，可继续追加。`
+        : "粘贴 API Key / JWT / 邮箱密码，自动识别格式入池。",
+      done: hasAccount,
+      icon: Plus,
+      cta: hasAccount ? "再导一批" : "去导入",
+      onClick: () => {
+        mainView.activeTab = "Accounts";
+      },
+    },
+    {
+      key: "ca-hosts",
+      index: 2,
+      title: "装 CA 证书 + Hosts 接管",
+      description: setupReady
+        ? "CA 已信任 + Hosts 已映射，本机接管路径就绪。"
+        : !caReady && !hostsReady
+          ? "下方 MITM 面板「一键安装」会同时配好两项，需要管理员密码。"
+          : !caReady
+            ? "CA 证书还没信任，下方 MITM 面板里点「安装证书」。"
+            : "Hosts 还没配置，下方 MITM 面板里点「配置 Hosts」。",
+      done: setupReady,
+      icon: ShieldCheck,
+      cta: setupReady ? "已就绪" : "前往配置",
+      onClick: () => {
+        // 已经在 Dashboard 页面，向下滚到 MitmPanel 让用户看到
+        if (typeof document !== "undefined") {
+          const panel = document.querySelector(
+            'section [data-mitm-panel="true"]',
+          ) as HTMLElement | null;
+          panel?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      },
+    },
+    {
+      key: "mitm-on",
+      index: 3,
+      title: "打开 MITM 代理",
+      description: mitmRunning
+        ? "代理已运行，IDE 流量正在按号池切号。"
+        : setupReady
+          ? "下方 MITM 面板里点开关，启动后 IDE 即可正常对话。"
+          : "完成上一步后再回来打开。",
+      done: mitmRunning,
+      icon: Play,
+      cta: mitmRunning ? "运行中" : "启动代理",
+      onClick: () => {
+        if (typeof document !== "undefined") {
+          const panel = document.querySelector(
+            'section [data-mitm-panel="true"]',
+          ) as HTMLElement | null;
+          panel?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      },
+    },
+  ];
+
+  // 找到第一个 done=false 的索引，标 current
+  const firstUndoneIdx = stepsRaw.findIndex((s) => !s.done);
+  return stepsRaw.map((s, i) => ({
+    ...s,
+    current: i === firstUndoneIdx,
+  }));
+});
+
+const allOnboardingDone = computed(() =>
+  onboardingSteps.value.every((s) => s.done),
+);
 </script>
 
 <template>
@@ -272,7 +384,7 @@ const nextSteps = computed(() => {
   <SkeletonOverlay v-else :active="refreshing" label="总览刷新中">
     <div class="space-y-6 p-6">
       <section
-        class="ios-glass overflow-hidden rounded-[28px] border border-black/[0.05] shadow-[0_20px_48px_-20px_rgba(15,23,42,0.18)] dark:border-white/[0.06]"
+        class="ios-glass overflow-hidden rounded-ios-card border border-black/[0.05] shadow-[0_20px_48px_-20px_rgba(15,23,42,0.18)] dark:border-white/[0.06]"
       >
         <div
           class="border-b border-black/[0.05] bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.16),transparent_35%),linear-gradient(180deg,rgba(255,255,255,0.82),rgba(255,255,255,0.68))] px-6 py-5 dark:border-white/[0.06] dark:bg-[radial-gradient(circle_at_top_left,rgba(96,165,250,0.18),transparent_35%),linear-gradient(180deg,rgba(28,28,30,0.94),rgba(28,28,30,0.84))]"
@@ -336,6 +448,9 @@ const nextSteps = computed(() => {
               </button>
             </div>
           </div>
+
+          <!-- F7-REMOVAL: 整行 <F7Banner/> 删除即可，状态条由组件控制显隐 -->
+          <F7Banner variant="full" />
         </div>
 
         <!-- ★ v1.6.0 诊断结果 Modal -->
@@ -345,7 +460,7 @@ const nextSteps = computed(() => {
           @click.self="showDiagnostics = false"
         >
           <div
-            class="w-full sm:w-[min(100%,600px)] mx-auto bg-white dark:bg-[#1c1c1e] rounded-t-[28px] sm:rounded-[28px] shadow-[0_-20px_60px_rgba(0,0,0,0.3)] ring-1 ring-white/50 dark:ring-white/10 max-h-[80vh] flex flex-col overflow-hidden animate-sheet-up"
+            class="w-full sm:w-[min(100%,600px)] mx-auto bg-white dark:bg-[#1c1c1e] rounded-t-ios-card sm:rounded-ios-card shadow-ios-sheet ring-1 ring-white/50 dark:ring-white/10 max-h-[80vh] flex flex-col overflow-hidden animate-sheet-up"
           >
             <!-- 头 -->
             <div class="px-5 pt-4 pb-3 border-b border-black/[0.04] dark:border-white/[0.04] flex items-center justify-between">
@@ -377,7 +492,7 @@ const nextSteps = computed(() => {
               <div
                 v-for="c in diagnostics?.checks ?? []"
                 :key="c.id"
-                class="rounded-[16px] border p-3 flex items-start gap-3"
+                class="rounded-ios-block border p-3 flex items-start gap-3"
                 :class="diagnoseStatusClass(c.status)"
               >
                 <div class="shrink-0 mt-0.5">
@@ -469,7 +584,9 @@ const nextSteps = computed(() => {
       <section
         class="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.25fr)_360px]"
       >
-        <MitmPanel />
+        <div data-mitm-panel="true" class="min-w-0">
+          <MitmPanel />
+        </div>
 
         <div class="space-y-6">
           <div
@@ -549,42 +666,114 @@ const nextSteps = computed(() => {
             </div>
           </div>
 
+          <!-- ── 上手步骤卡片(可点击) ──
+               从「号池数 / CA / Hosts / MITM 启动」推导当前步骤,
+               每一步是一个 button,点击直接跳转或滚到 MitmPanel,
+               已完成的标 ✓,当前未完成的高亮强调,后续步骤淡显。 -->
           <div
             class="ios-glass rounded-[24px] border border-black/[0.05] p-5 shadow-[0_16px_36px_-22px_rgba(15,23,42,0.18)] dark:border-white/[0.06]"
           >
             <div class="flex items-center gap-2">
               <div
-                class="flex h-9 w-9 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
+                class="flex h-9 w-9 items-center justify-center rounded-2xl"
+                :class="
+                  allOnboardingDone
+                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300'
+                    : 'bg-ios-blue/10 text-ios-blue dark:text-blue-300'
+                "
               >
-                <Activity class="h-4 w-4" stroke-width="2.4" />
+                <CheckCircle2
+                  v-if="allOnboardingDone"
+                  class="h-4 w-4"
+                  stroke-width="2.4"
+                />
+                <Activity v-else class="h-4 w-4" stroke-width="2.4" />
               </div>
               <div>
                 <div
                   class="text-[13px] font-bold text-ios-text dark:text-ios-textDark"
                 >
-                  下一步
+                  {{ allOnboardingDone ? "已就绪 · 三步全部完成" : "三步上手" }}
                 </div>
                 <div
                   class="text-[11px] text-ios-textSecondary dark:text-ios-textSecondaryDark"
                 >
-                  纯 MITM 模式下，最短路径就是这三步。
+                  {{
+                    allOnboardingDone
+                      ? "MITM 已接管 IDE 流量,可以专注号池管理或对接外部客户端。"
+                      : "按顺序点击下方步骤,每步都会跳到对应位置。"
+                  }}
                 </div>
               </div>
             </div>
 
             <div class="mt-4 space-y-2">
-              <div
-                v-for="(step, index) in nextSteps"
-                :key="`${index}-${step}`"
-                class="flex items-start gap-3 rounded-[16px] border border-black/[0.05] bg-black/[0.02] px-3 py-3 text-[12px] leading-relaxed text-ios-text dark:border-white/[0.06] dark:bg-white/[0.03] dark:text-ios-textDark"
+              <button
+                v-for="step in onboardingSteps"
+                :key="step.key"
+                type="button"
+                class="no-drag-region group flex w-full items-start gap-3 rounded-ios-block border px-3 py-3 text-left transition-all ios-btn"
+                :class="[
+                  step.done
+                    ? 'border-emerald-500/15 bg-emerald-500/[0.05] hover:bg-emerald-500/[0.08]'
+                    : step.current
+                      ? 'border-ios-blue/30 bg-ios-blue/[0.06] shadow-[0_8px_24px_-14px_rgba(37,99,235,0.4)] hover:-translate-y-0.5 hover:bg-ios-blue/[0.10]'
+                      : 'border-black/[0.05] bg-black/[0.02] dark:border-white/[0.06] dark:bg-white/[0.03] hover:bg-black/[0.04] dark:hover:bg-white/[0.05]',
+                ]"
+                @click="step.onClick()"
               >
                 <span
-                  class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-ios-blue/10 text-[10px] font-bold text-ios-blue"
+                  class="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[12px] font-black"
+                  :class="
+                    step.done
+                      ? 'bg-emerald-500 text-white'
+                      : step.current
+                        ? 'bg-ios-blue text-white shadow-md shadow-ios-blue/30'
+                        : 'bg-black/[0.08] text-ios-textSecondary dark:bg-white/[0.1] dark:text-ios-textSecondaryDark'
+                  "
                 >
-                  {{ index + 1 }}
+                  <CheckCircle2
+                    v-if="step.done"
+                    class="h-4 w-4"
+                    stroke-width="2.6"
+                  />
+                  <span v-else>{{ step.index }}</span>
                 </span>
-                <span>{{ step }}</span>
-              </div>
+                <div class="min-w-0 flex-1">
+                  <div
+                    class="flex items-center gap-1.5 text-[13px] font-bold text-ios-text dark:text-ios-textDark"
+                  >
+                    <component
+                      :is="step.icon"
+                      class="h-3.5 w-3.5 opacity-80"
+                      stroke-width="2.5"
+                    />
+                    {{ step.title }}
+                  </div>
+                  <div
+                    class="mt-1 text-[11px] leading-relaxed text-ios-textSecondary dark:text-ios-textSecondaryDark"
+                  >
+                    {{ step.description }}
+                  </div>
+                </div>
+                <div
+                  class="ml-auto inline-flex shrink-0 items-center gap-0.5 self-center text-[11px] font-bold transition-all"
+                  :class="
+                    step.done
+                      ? 'text-emerald-600 dark:text-emerald-300'
+                      : step.current
+                        ? 'text-ios-blue dark:text-blue-300 group-hover:gap-1.5'
+                        : 'text-ios-textSecondary dark:text-ios-textSecondaryDark'
+                  "
+                >
+                  {{ step.cta }}
+                  <ChevronRight
+                    v-if="!step.done"
+                    class="h-3.5 w-3.5"
+                    stroke-width="2.5"
+                  />
+                </div>
+              </button>
             </div>
           </div>
 

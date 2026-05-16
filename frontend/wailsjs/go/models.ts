@@ -148,11 +148,11 @@ export namespace main {
 	    email: string;
 	    api_key: string;
 	    remark: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new EmailAPIKeyItem(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.email = source["email"];
@@ -475,6 +475,7 @@ export namespace models {
 	    silent_start: boolean;
 	    mitm_debug_dump: boolean;
 	    mitm_full_capture: boolean;
+	    smart_friend_enabled: boolean;
 	    static_cache_intercept: boolean;
 	    mitm_jailbreak_enabled: boolean;
 	    mitm_jailbreak_override: string;
@@ -528,6 +529,7 @@ export namespace models {
 	        this.silent_start = source["silent_start"];
 	        this.mitm_debug_dump = source["mitm_debug_dump"];
 	        this.mitm_full_capture = source["mitm_full_capture"];
+	        this.smart_friend_enabled = source["smart_friend_enabled"];
 	        this.static_cache_intercept = source["static_cache_intercept"];
 	        this.mitm_jailbreak_enabled = source["mitm_jailbreak_enabled"];
 	        this.mitm_jailbreak_override = source["mitm_jailbreak_override"];

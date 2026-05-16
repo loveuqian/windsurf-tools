@@ -86,7 +86,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
           @click.self="open = false"
         >
           <div
-            class="w-full sm:max-w-[440px] mx-auto bg-white dark:bg-[#1C1C1E] rounded-t-[28px] sm:rounded-[28px] sm:mb-8 shadow-[0_-20px_60px_rgba(0,0,0,0.3)] ring-1 ring-white/50 dark:ring-white/10 max-h-[75vh] flex flex-col overflow-hidden animate-sheet-up"
+            class="w-full sm:max-w-[440px] mx-auto bg-white dark:bg-[#1C1C1E] rounded-t-ios-card sm:rounded-ios-card sm:mb-8 shadow-ios-sheet ring-1 ring-white/50 dark:ring-white/10 max-h-[75vh] flex flex-col overflow-hidden animate-sheet-up"
           >
             <!-- header -->
             <div

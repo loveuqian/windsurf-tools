@@ -215,7 +215,7 @@ func (a *App) rotationPoolSwitchOnce(reason string) (string, error) {
 	}
 
 	currentID := findAccountIDForMITMAPIKey(a.store.GetAllAccounts(), a.mitmProxy.CurrentAPIKey())
-	target := pickNextRotationPoolMember(a.store.GetAllAccounts(), members, currentID)
+	target := pickNextRotationPoolMember(a.store.GetAllAccounts(), members, currentID, a.shouldBypassQuotaCheck())
 	if target == nil {
 		err := fmt.Errorf("池内没有可切的可用账号 (当前=%s 成员=%d)", currentID[:min(8, len(currentID))], len(members))
 		a.recordRotationPoolError(err.Error())
@@ -291,8 +291,9 @@ func (a *App) recordRotationPoolError(msg string) {
 
 // pickNextRotationPoolMember 从 memberIDs 里挑一个能用的、不是 currentID 的账号。
 // 按 ID 列表顺序找 currentID 的下一个；找不到就取第一个可用的；都不可用返回 nil。
-// 可用 = 有 WindsurfAPIKey + 未过期 + 未额度耗尽。
-func pickNextRotationPoolMember(all []models.Account, memberIDs []string, currentID string) *models.Account {
+// 可用 = 有 凭证 + 未 disabled/expired + (非 SmartFriend 时) 未额度耗尽。
+// bypassQuota=true 时跳过额度过滤——SmartFriend(F7) 模式下「显示耗尽」实际仍可用。
+func pickNextRotationPoolMember(all []models.Account, memberIDs []string, currentID string, bypassQuota bool) *models.Account {
 	byID := make(map[string]models.Account, len(all))
 	for _, a := range all {
 		byID[a.ID] = a
@@ -309,7 +310,7 @@ func pickNextRotationPoolMember(all []models.Account, memberIDs []string, curren
 		if !ok {
 			return nil
 		}
-		if !rotationPoolMemberUsable(&acc) {
+		if !rotationPoolMemberUsable(&acc, bypassQuota) {
 			return nil
 		}
 		return &acc
@@ -324,7 +325,10 @@ func pickNextRotationPoolMember(all []models.Account, memberIDs []string, curren
 	return nil
 }
 
-func rotationPoolMemberUsable(acc *models.Account) bool {
+// rotationPoolMemberUsable 判断轮换池成员是否可参与下一次定时切号。
+// bypassQuota=true 时跳过额度耗尽过滤——SmartFriend(F7) 模式下服务端按
+// SMART_FRIEND 计费、绕过日/周限额，「显示耗尽」实际仍可用。
+func rotationPoolMemberUsable(acc *models.Account, bypassQuota bool) bool {
 	if acc == nil {
 		return false
 	}
@@ -335,7 +339,7 @@ func rotationPoolMemberUsable(acc *models.Account) bool {
 	if status == "disabled" || status == "expired" {
 		return false
 	}
-	if utils.AccountQuotaExhausted(acc) {
+	if !bypassQuota && utils.AccountQuotaExhausted(acc) {
 		return false
 	}
 	return true

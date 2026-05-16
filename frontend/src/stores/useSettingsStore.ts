@@ -20,7 +20,9 @@ export const useSettingsStore = defineStore('settings', () => {
 
   const fetchSettings = async (force = false) => {
     const now = Date.now()
-    if (fetchInFlight) {
+    // force=true 不复用 in-flight；调用方通常是 settings 刚被 update 的场景，
+    // 必须拿到最新值。
+    if (fetchInFlight && !force) {
       return fetchInFlight
     }
     if (!force && settings.value && now-lastFetchedAt < 2500) {

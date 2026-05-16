@@ -29,7 +29,9 @@ export const useAccountStore = defineStore("account", () => {
 
   const fetchAccounts = async (force = false) => {
     const now = Date.now();
-    if (fetchInFlight) {
+    // 关键：仅在 force=false 时复用 in-flight。force=true 是显式「我要最新数据」
+    // 的语义（用户点刷新 / 切号后），不能让旧 in-flight 把旧快照当结果返回。
+    if (fetchInFlight && !force) {
       return fetchInFlight;
     }
     if (!force && now - lastFetchedAt < 1500) {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { APIInfo } from "../api/wails";
-import { confirmDialog, showToast } from "../utils/toast";
+import { confirmDialog, showToast, showErrorToast } from "../utils/toast";
 import { useMainViewStore } from "../stores/useMainViewStore";
 import {
   Activity,
@@ -278,7 +278,7 @@ const fetchUsageData = async (options?: {
     ]);
   } catch (e: any) {
     if (!silent) {
-      showToast(`获取用量数据失败: ${String(e)}`, "error");
+      showErrorToast(e, "获取用量数据失败");
     } else {
       console.error("Silent usage refresh failed:", e);
     }
@@ -314,7 +314,7 @@ const handleClear = async () => {
     });
     showToast(`已清空 ${deletedCount} 条用量记录`, "success");
   } catch (e: any) {
-    showToast(`清空记录失败: ${String(e)}`, "error");
+    showErrorToast(e, "清空记录失败");
   }
 };
 
@@ -432,7 +432,13 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
       </div>
     </div>
 
-    <PageLoadingSkeleton v-if="loading" variant="usage" class="w-full" />
+    <!-- 已有 summary 缓存就直接渲染，避免切换页面后整屏骨架闪一下;
+         首次空数据仍走骨架。 -->
+    <PageLoadingSkeleton
+      v-if="loading && !summary"
+      variant="usage"
+      class="w-full"
+    />
 
     <div v-else class="space-y-6">
       <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -665,7 +671,7 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
               <div class="text-[11px] font-bold uppercase tracking-[0.1em] text-gray-400 dark:text-gray-500 mb-2">
                 搜索
               </div>
-              <div class="flex items-center gap-2 rounded-[16px] border border-black/[0.06] bg-white/80 px-4 py-3 shadow-sm dark:border-white/[0.08] dark:bg-black/20">
+              <div class="flex items-center gap-2 rounded-ios-block border border-black/[0.06] bg-white/80 px-4 py-3 shadow-sm dark:border-white/[0.08] dark:bg-black/20">
                 <Search class="h-4 w-4 shrink-0 text-gray-400" stroke-width="2.2" />
                 <input
                   v-model.trim="searchQuery"
@@ -681,7 +687,7 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
               </div>
               <select
                 v-model="modelFilter"
-                class="no-drag-region w-full rounded-[16px] border border-black/[0.06] bg-white/80 px-4 py-3 text-[13px] font-medium text-gray-800 shadow-sm outline-none transition focus:border-ios-blue/40 dark:border-white/[0.08] dark:bg-black/20 dark:text-gray-100"
+                class="no-drag-region w-full rounded-ios-block border border-black/[0.06] bg-white/80 px-4 py-3 text-[13px] font-medium text-gray-800 shadow-sm outline-none transition focus:border-ios-blue/40 dark:border-white/[0.08] dark:bg-black/20 dark:text-gray-100"
               >
                 <option value="all">全部模型</option>
                 <option v-for="model in modelOptions" :key="model" :value="model">
@@ -698,7 +704,7 @@ const formatPercent = (value: number) => `${value.toFixed(value >= 10 ? 1 : 2)}%
           class="flex flex-col items-center justify-center py-16 px-6 text-center"
         >
           <div class="relative mb-6">
-            <div class="w-24 h-24 rounded-[28px] bg-gradient-to-br from-violet-500/15 to-ios-blue/15 dark:from-violet-500/25 dark:to-ios-blue/25 flex items-center justify-center shadow-[0_10px_28px_rgba(99,102,241,0.12)]">
+            <div class="w-24 h-24 rounded-ios-card bg-gradient-to-br from-violet-500/15 to-ios-blue/15 dark:from-violet-500/25 dark:to-ios-blue/25 flex items-center justify-center shadow-[0_10px_28px_rgba(99,102,241,0.12)]">
               <BarChart3 class="w-11 h-11 text-violet-500 dark:text-violet-300" stroke-width="1.8" />
             </div>
             <div v-if="!records.length" class="absolute -bottom-1 -right-1 w-10 h-10 rounded-2xl bg-white dark:bg-[#1C1C1E] flex items-center justify-center shadow-md ring-2 ring-white/80 dark:ring-black/80">

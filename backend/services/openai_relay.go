@@ -292,8 +292,10 @@ func (r *OpenAIRelay) handleChatCompletions(w http.ResponseWriter, req *http.Req
 
 		r.proxy.mu.RLock()
 		chatFP := r.proxy.keyFingerprint(apiKey)
+		// F7-REMOVAL: 下一行 smartFriend 读取删除；下面调用改回 BuildChatRequestWithModel(...) 不传 smartFriend
+		smartFriend := r.proxy.smartFriendEnabled
 		r.proxy.mu.RUnlock()
-		protoBody := BuildChatRequestWithModel(chatReq.Messages, apiKey, jwtStr, "", chatReq.Model, chatFP)
+		protoBody := buildChatRequestWithModelMode(chatReq.Messages, apiKey, jwtStr, "", chatReq.Model, chatFP, smartFriend)
 		// Connect 协议：直接发送 protobuf body（无 envelope）
 		// 有 envelope 返回 invalid_argument，无 envelope 返回 resource_exhausted（更接近成功）
 		resp, kind, err := r.sendGRPC(protoBody, apiKey, jwtStr)
