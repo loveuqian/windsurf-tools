@@ -1,14 +1,21 @@
+import { useMemo } from "react";
 import {
   Activity,
   BookOpen,
   Globe,
   HardDriveDownload,
+  Hash,
   Heart,
   LayoutDashboard,
-  Settings,
+  MessageSquare,
+  Settings as SettingsIcon,
+  Shield,
+  User,
   Users,
 } from "lucide-react";
+import { useAccountStore } from "../../stores/useAccountStore";
 import { useMainViewStore } from "../../stores/useMainViewStore";
+import { useMitmStatusStore } from "../../stores/useMitmStatusStore";
 import { PRIMARY_POOL_LABEL, type ShellViewTab } from "../../utils/appMode";
 
 interface MenuItem {
@@ -23,16 +30,56 @@ const MENU_ITEMS: MenuItem[] = [
   { id: "Usage", icon: Activity, label: "用量统计" },
   { id: "Relay", icon: Globe, label: "OpenAI Relay" },
   { id: "Cleanup", icon: HardDriveDownload, label: "清理优化" },
-  { id: "Settings", icon: Settings, label: "MITM 设置" },
+  { id: "Settings", icon: SettingsIcon, label: "MITM 设置" },
 ];
 
 /**
- * Sidebar — React 重构版（Day 2 完整迁移到带 MITM 概况卡片版本）。
- * 当前最小可用：8 个 view 切换 + 底部 Help/About 入口。
+ * Sidebar — Vue 1:1 完整迁移：导航 + MITM 概况卡（号池总数 / 当前活跃 Key /
+ * 当前活跃账号 / 绑定对话 / 健康度）+ Help/About 入口。
  */
 export default function Sidebar() {
   const activeTab = useMainViewStore((s) => s.activeTab);
   const setActiveTab = useMainViewStore((s) => s.setActiveTab);
+
+  const accounts = useAccountStore((s) => s.accounts);
+  const status = useMitmStatusStore((s) => s.status);
+
+  const activeKey = useMemo(
+    () => status?.pool_status?.find((item) => item.is_current) ?? null,
+    [status],
+  );
+
+  const activeSummary = useMemo(() => {
+    const key = String(activeKey?.key_short || "").trim();
+    if (!key) return "等待活跃 Key";
+    return key;
+  }, [activeKey]);
+
+  const activeAccountLabel = useMemo(() => {
+    const k = activeKey;
+    if (!k) return "";
+    const nick = String(k.nickname || "").trim();
+    const email = String(k.email || "").trim();
+    if (nick && email) return `${nick} (${email})`;
+    return email || nick || "";
+  }, [activeKey]);
+
+  const boundSessions = useMemo(() => {
+    const sessions = status?.active_sessions ?? [];
+    const currentHash = activeKey?.key_hash ?? "";
+    const currentShort = activeKey?.key_short ?? "";
+    if (!currentHash && !currentShort) return [];
+    return sessions.filter((s) => {
+      if (currentHash && s.pool_key_hash) {
+        return s.pool_key_hash === currentHash;
+      }
+      return s.pool_key_short === currentShort;
+    });
+  }, [status, activeKey]);
+
+  const healthyCount =
+    status?.pool_status?.filter((item) => item.healthy).length ?? 0;
+  const totalCount = status?.pool_status?.length ?? 0;
 
   return (
     <nav className="w-60 h-full ios-glass border-r border-ios-divider dark:border-ios-dividerDark flex flex-col pt-6 pb-6 z-40 shrink-0">
@@ -68,6 +115,77 @@ export default function Sidebar() {
           );
         })}
       </ul>
+
+      <div className="mx-3 mt-4 rounded-[18px] border border-black/[0.05] bg-white/60 px-4 py-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:border-white/[0.06] dark:bg-white/[0.04]">
+        <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-ios-textSecondary dark:text-ios-textSecondaryDark">
+          MITM 概况
+        </div>
+        <div className="mt-3 flex items-center justify-between">
+          <div>
+            <div className="text-[20px] font-extrabold leading-none text-ios-text dark:text-ios-textDark">
+              {accounts.length}
+            </div>
+            <div className="mt-1 text-[11px] font-medium text-ios-textSecondary dark:text-ios-textSecondaryDark">
+              号池总数
+            </div>
+          </div>
+          <span className="rounded-full bg-ios-blue/10 px-2.5 py-1 text-[10px] font-bold tracking-wide text-ios-blue">
+            Pure MITM
+          </span>
+        </div>
+
+        <div className="mt-3 rounded-[14px] bg-black/[0.03] px-3 py-2 text-[11px] font-medium text-ios-textSecondary dark:bg-white/[0.05] dark:text-ios-textSecondaryDark">
+          当前活跃 Key
+          <div
+            className="mt-1 truncate text-[12px] font-semibold text-ios-text dark:text-ios-textDark"
+            title={activeSummary}
+          >
+            {activeSummary}
+          </div>
+        </div>
+
+        {activeAccountLabel ? (
+          <div className="mt-2 flex items-center gap-1.5 rounded-[14px] bg-ios-blue/[0.06] px-3 py-2 text-[11px] font-medium text-ios-blue">
+            <User className="h-3.5 w-3.5 shrink-0" strokeWidth={2.4} />
+            <span className="truncate" title={activeAccountLabel}>
+              {activeAccountLabel}
+            </span>
+          </div>
+        ) : null}
+
+        {boundSessions.length > 0 ? (
+          <div className="mt-2 rounded-[14px] bg-black/[0.02] px-3 py-2 dark:bg-white/[0.03]">
+            <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-[0.15em] text-ios-textSecondary dark:text-ios-textSecondaryDark mb-1.5">
+              <MessageSquare className="h-3 w-3 shrink-0" strokeWidth={2.2} />
+              绑定对话 ({boundSessions.length})
+            </div>
+            <ul className="space-y-1">
+              {boundSessions.map((session) => (
+                <li
+                  key={session.conv_id_short}
+                  className="flex items-center gap-1.5 text-[10px] text-ios-text dark:text-ios-textDark"
+                >
+                  <Hash className="h-3 w-3 shrink-0 opacity-40" strokeWidth={2} />
+                  <span
+                    className="truncate font-mono"
+                    title={session.conv_id_short}
+                  >
+                    {session.conv_id_short}
+                  </span>
+                  <span className="ml-auto shrink-0 text-[9px] text-ios-textSecondary dark:text-ios-textSecondaryDark">
+                    {session.request_count}次
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        <div className="mt-3 flex items-center gap-2 rounded-[14px] border border-emerald-500/12 bg-emerald-500/[0.06] px-3 py-2 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+          <Shield className="h-3.5 w-3.5 shrink-0" strokeWidth={2.4} />
+          健康 {healthyCount} / {totalCount}
+        </div>
+      </div>
 
       <div className="mx-3 mt-3 flex gap-2">
         <button
