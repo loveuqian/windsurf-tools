@@ -27,7 +27,7 @@ export const useRelayStatusStore = create<RelayStatusState>((set, get) => ({
 
   fetchStatus: async (force = false) => {
     const now = Date.now();
-    if (fetchInFlight) return fetchInFlight;
+    if (fetchInFlight && !force) return fetchInFlight;
     if (!force && get().hasLoadedOnce && now - lastFetchedAt < 10_000) return;
     const blocking = !get().hasLoadedOnce;
     set(blocking ? { isLoading: true } : { isRefreshing: true });

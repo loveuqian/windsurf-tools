@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Settings as SettingsIcon, ShieldCheck } from "lucide-react";
 import { APIInfo } from "../api/wails";
 import IAutoSaveIndicator from "../components/ios/IAutoSaveIndicator";
@@ -38,6 +38,8 @@ export default function Settings() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveStateResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const formRef = useRef<SettingsForm | null>(null);
+  const savingRef = useRef(false);
+  const pendingSaveRef = useRef(false);
 
   // 初次加载 settings → 转 form
   useEffect(() => {
@@ -45,10 +47,19 @@ export default function Settings() {
   }, []);
 
   useEffect(() => {
-    if (settings && !form) {
-      const f = settingsToForm(settings);
-      setForm(f);
-      formRef.current = f;
+    if (settings) {
+      const next = settingsToForm(settings);
+      setForm((prev) => {
+        if (savingRef.current || pendingSaveRef.current) {
+          if (!prev) {
+            formRef.current = next;
+            return next;
+          }
+          return prev;
+        }
+        formRef.current = next;
+        return next;
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings]);
@@ -60,6 +71,12 @@ export default function Settings() {
     }
     const cur = formRef.current;
     if (!cur) return;
+    if (savingRef.current) {
+      pendingSaveRef.current = true;
+      return;
+    }
+    savingRef.current = true;
+    pendingSaveRef.current = false;
     setSaveState("saving");
     try {
       await APIInfo.updateSettings(formToSettings(cur));
@@ -73,11 +90,17 @@ export default function Settings() {
     } catch (e) {
       setSaveState("error");
       setSaveError(String(e));
+    } finally {
+      savingRef.current = false;
+      if (pendingSaveRef.current) {
+        void flushSave();
+      }
     }
   };
 
   // patch + 防抖触发自动保存
   const patch = (delta: Partial<SettingsForm>) => {
+    pendingSaveRef.current = true;
     setForm((prev) => {
       if (!prev) return prev;
       const next = { ...prev, ...delta };
@@ -119,6 +142,12 @@ export default function Settings() {
     try {
       await APIInfo.importSettings(text);
       await useSettingsStore.getState().fetchSettings(true);
+      const latest = useSettingsStore.getState().settings;
+      if (latest) {
+        const next = settingsToForm(latest);
+        formRef.current = next;
+        setForm(next);
+      }
       showToast("配置已导入并应用", "success");
     } catch (e) {
       showErrorToast(e, "导入配置失败");
