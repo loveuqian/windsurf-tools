@@ -121,6 +121,14 @@ export const APIInfo = {
     }>;
   }>,
 
+  // 上游代理状态（GetUpstreamProxyStatus）—— 排障神器
+  // 让用户在 UI 上直接看到现在走 clash / 系统代理 / 直连
+  getUpstreamProxyStatus: (AppHooks as any).GetUpstreamProxyStatus as () => Promise<{
+    source: 'direct' | 'clash+nodes' | 'clash' | 'system' | 'unknown';
+    url: string;            // 已 redact userinfo，空串 = 直连
+    last_applied_at: string; // RFC3339，空 = 未触发过
+  }>,
+
   // Clash IP 轮换
   testClashController: (AppHooks as any).TestClashController,
   listClashGroupNodes: (AppHooks as any).ListClashGroupNodes,

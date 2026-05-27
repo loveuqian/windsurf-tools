@@ -148,11 +148,11 @@ export namespace main {
 	    email: string;
 	    api_key: string;
 	    remark: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new EmailAPIKeyItem(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.email = source["email"];

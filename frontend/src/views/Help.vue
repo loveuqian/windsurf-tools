@@ -287,8 +287,8 @@ const toggleChapter = (id: string) => {
                     一键智能启用（v1.1.0+）
                   </div>
                   <p class="text-[12.5px] text-gray-700 dark:text-gray-300">
-                    Settings → Clash IP 轮换 → 填控制器 URL (默认
-                    <code>http://127.0.0.1:9097</code> Verge) +
+                    Settings → Clash IP 轮换 → 填控制器 URL (Mihomo / Clash 默认
+                    <code>http://127.0.0.1:9090</code>;Verge 默认 <code>9097</code>) +
                     secret → 点 <b>「✨ 智能启用」</b>。后端会：
                   </p>
                   <ol class="list-decimal pl-5 mt-1.5 text-[12px] text-gray-600 dark:text-gray-400 space-y-0.5">

@@ -249,7 +249,7 @@ type MitmProxy struct {
 	listener net.Listener
 	running  bool
 	port     int
-	proxyURL string // 出站代理 (如 http://127.0.0.1:7890)
+	proxyURL string // 上游代理 (如 http://127.0.0.1:7890)
 
 	poolKeys   []string // ordered list of api keys
 	keyStates  map[string]*PoolKeyState
@@ -791,10 +791,27 @@ func (p *MitmProxy) SetWindsurfService(windsurfSvc *WindsurfService) {
 	p.windsurfSvc = windsurfSvc
 }
 
-func (p *MitmProxy) SetOutboundProxy(proxyURL string) {
+// SetUpstreamProxy 切换上游代理 URL。
+// transport.Proxy 是闭包，下一次请求自动读到新值；同时清掉 idle 连接池避免
+// HTTP/2 复用旧出口 IP（同 ClashRotator 切节点后 CloseUpstreamIdleConnections）。
+func (p *MitmProxy) SetUpstreamProxy(proxyURL string) {
+	proxyURL = strings.TrimSpace(proxyURL)
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.proxyURL = strings.TrimSpace(proxyURL)
+	changed := p.proxyURL != proxyURL
+	p.proxyURL = proxyURL
+	t := p.upstreamBase
+	p.mu.Unlock()
+	if !changed {
+		return
+	}
+	if proxyURL == "" {
+		p.log("上游代理: <direct>")
+	} else {
+		p.log("上游代理: %s", proxyURL)
+	}
+	if t != nil {
+		t.CloseIdleConnections()
+	}
 }
 
 // SetDebugDump 开启/关闭 proto dump（GetChatMessage 请求/响应字段树写入文件）
@@ -1186,7 +1203,8 @@ func (p *MitmProxy) CurrentAPIKey() string {
 	return p.poolKeys[p.currentIdx]
 }
 
-// buildUpstreamTransport 构建出站 Transport，支持通过用户本地代理 (如 Clash) 访问上游
+// buildUpstreamTransport 构建出站 Transport。
+// t.Proxy 是闭包：每次请求重新读 p.proxyURL，运行时 SetUpstreamProxy 即时生效。
 func (p *MitmProxy) buildUpstreamTransport() *http.Transport {
 	t := &http.Transport{
 		TLSClientConfig: &tls.Config{
@@ -1202,11 +1220,14 @@ func (p *MitmProxy) buildUpstreamTransport() *http.Transport {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 180 * time.Second,
 	}
-	if p.proxyURL != "" {
-		if u, err := url.Parse(p.proxyURL); err == nil {
-			t.Proxy = http.ProxyURL(u)
-			p.log("出站代理: %s", p.proxyURL)
+	t.Proxy = func(*http.Request) (*url.URL, error) {
+		p.mu.RLock()
+		raw := p.proxyURL
+		p.mu.RUnlock()
+		if raw == "" {
+			return nil, nil
 		}
+		return url.Parse(raw)
 	}
 	return t
 }

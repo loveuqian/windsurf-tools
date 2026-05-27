@@ -1,6 +1,6 @@
 # Windsurf Tools 🏄‍♂️
 
-[![Version](https://img.shields.io/badge/Version-v1.9.0-success)](https://github.com/seven7763/windsurf-tools/releases)
+[![Version](https://img.shields.io/badge/Version-v1.10.0-success)](https://github.com/seven7763/windsurf-tools/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)](#运行环境--prerequisites)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Built with Wails](https://img.shields.io/badge/Built%20with-Wails%20v2-red)](https://wails.io/)
@@ -214,6 +214,42 @@ wails build
 ---
 
 ## 🔧 最近修复 | Recent Fixes
+
+### v1.10.0 (2026-05-27)
+
+**上游代理热切换重构 + macOS 托盘 + 全面打磨 | Upstream Proxy Hot-Switch + macOS Tray + Polish**
+
+**代理热切换 | Proxy Hot-Switch (P1、3)**
+
+- **OpenAIRelay 对齐 MITM 闭包策略** — `SetUpstreamProxy` 不再重建 transport，改为改字段 + `CloseIdleConnections`，与 `MitmProxy.SetUpstreamProxy` 行为完全一致。切换瞬间 in-flight 请求不被 abort，无双出口、无 GC 抖动
+- **applyUpstreamProxy epoch 串行化** — 用户连点保存设置 / 多入口同时触发时，不再出现多个 goroutine 并发探活后旧 stale 结果覆盖新结果。`atomic.Uint64` epoch + `sync.Mutex` 双重校验
+- **clash probe TTL 缓存** — `probeClashProxyEntry` 2s 内存缓存，避免 UI 连点重复跑 3s HTTP 探活；AutoSetupClash 等明确状态变更入口调 `InvalidateClashProbeCache` 绕过
+- **readSystemProxy 多域 probe** — 从单一 windsurf 域改成 [windsurf, anthropic, openai] 顺序探，任一命中即返回，应对 NO_PROXY 边角场景
+- **clash secret 双发** — 同时设 `Authorization: Bearer` 和 `?secret=` query，兼容 mihomo / clash-meta + 老 clash-premium fork
+- **clash 三端口全 0 诊断日志** — 探活通了但 mixed-port/port/socks-port 全为 0 时写 `log.Printf`，不再静默降级
+
+**启动 / 关闭 | Lifecycle (A5、6、7, S3)**
+
+- **`log.Fatalf` → `runtime.Quit`** — 启动失败不再 `os.Exit` 跳过 OnShutdown。交互模式弹原生 MessageDialog，silent 模式写日志，两者都走 `runtime.Quit` 让 hosts / CA / 443 listener / 托盘被清理
+- **shutdown 加 `sync.Once`** — wails 在 panic / second-instance / 快速退出路径上重入 OnShutdown 不再走到 hosts / CA 重复处理
+- **显式 `mitmProxy.Stop()`** — 与 `openaiRelay.Stop()` 对称。未启动 / 无 hosts / 无 CA 三条都不满足时 listener 不再漏关
+- **shutdown cleanup 同步等待到底** — 写 hosts / 卸 CA / macOS sudo 弹窗都走完成不走超时。残留 hosts / CA 会把用户全机流量劈到 127.0.0.1:443，比 wails 多卡几秒严重得多；清理前后加日志告知用户为什么在等
+- **第二实例抢焦** — `activateExistingWindow` 加短暂置顶，绕过 Win11 防偷焦机制
+
+**端口 / 默认值 | Ports & Defaults (N2, N3)**
+
+- **OpenAIRelay 端口被占顺序降级** — 从 desiredPort 起最多探 14 个连续端口（8787-8800），实际端口写回 Status API。避免常用端口冲突 Relay 启不来
+- **Clash 默认控制器端口 9097 → 9090** — 对齐 mihomo / clash-meta / 原版 Clash / ClashX（Verge 仍 9097，Help 页双值说明）。初装用户照默认填不再探活失败
+
+**UI & macOS 托盘 | UI & Tray (P6, T1)**
+
+- **Dashboard 上游代理状态角标** — 新增 `GetUpstreamProxyStatus()` Wails API，Dashboard 顶部加第 6 张卡片显示当前走 `Clash + 轮换 / Clash / 系统代理 / 直连`，不用翻日志猜为什么还在被风控
+- **macOS 启用系统托盘** — `tray.go` build constraint 从 `windows` 改为 `windows || darwin`。Mac 用户现在能用 MinimizeToTray，关窗隐藏到顶栏而非直接退出
+
+**仓库健度 | Repo Health**
+
+- **添加 `.gitattributes` 强制 LF** — 修复 Windows `core.autocrlf=true` 导致的 EOL 翻转问题。之前编辑器回写时把 LF 转 CRLF，git diff 出现大量虚假行变动
+- **修 1 个预存在测试 bug** — `TestResolveJailbreakOverrideFilePath_EmptyUsesDefault` 在 Windows 上 fail（期望 `.claude/override.md` 但实际 `.claude\override.md`），改用 `filepath.Join` 构造跨平台后缀
 
 ### v1.9.0 (2026-05-14)
 

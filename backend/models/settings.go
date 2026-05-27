@@ -146,7 +146,7 @@ func DefaultSettings() Settings {
 		OpenAIRelayPort:             8787,
 		OpenAIRelaySecret:           "",
 		ClashRotateEnabled:          false,
-		ClashControllerURL:          "http://127.0.0.1:9097",
+		ClashControllerURL:          "http://127.0.0.1:9090",
 		ClashSecret:                 "",
 		ClashGroup:                  "",
 		ClashNodes:                  "",

@@ -118,7 +118,7 @@ type AutoSetupClashResult struct {
 	OK        bool   `json:"ok"`
 	Error     string `json:"error,omitempty"`
 	Hint      string `json:"hint,omitempty"`
-	Group     string `json:"group,omitempty"`     // 自动选中的组名
+	Group     string `json:"group,omitempty"`      // 自动选中的组名
 	NodeCount int    `json:"node_count,omitempty"` // 真节点数
 	From      string `json:"from,omitempty"`       // 切换前节点
 	To        string `json:"to,omitempty"`         // 立即切换后的节点
@@ -140,8 +140,8 @@ func (a *App) AutoSetupClash() AutoSetupClashResult {
 	url := strings.TrimSpace(settings.ClashControllerURL)
 	if url == "" {
 		return AutoSetupClashResult{
-			Error: "请先在「Clash IP 轮换」面板里填写控制器地址（如 http://127.0.0.1:9097）",
-			Hint:  "Verge 默认 9097；Mihomo 默认 9090；ClashX 默认 9090。",
+			Error: "请先在「Clash IP 轮换」面板里填写控制器地址（如 http://127.0.0.1:9090）",
+			Hint:  "Mihomo / ClashX / Clash 默认 9090；Verge 默认 9097。",
 		}
 	}
 
@@ -178,6 +178,9 @@ func (a *App) AutoSetupClash() AutoSetupClashResult {
 
 	// ④ 重启 rotator（applyClashRotatorSettings 会读最新 settings）
 	a.applyClashRotatorSettings()
+	// 用户刚显式启用 / 切换 clash 配置，强制下一次 probe 不读 2s 缓存
+	services.InvalidateClashProbeCache()
+	a.applyUpstreamProxy()
 
 	// ⑤ 立即触发一次切换并捕获 from→to
 	a.mu.Lock()

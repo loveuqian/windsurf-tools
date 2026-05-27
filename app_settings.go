@@ -50,6 +50,7 @@ func (a *App) UpdateSettings(settings models.Settings) error {
 	a.syncJailbreakConfig()
 	a.applyClashRotatorSettings()
 	a.applyRotationPoolSettings()
+	a.applyUpstreamProxy()
 	// 动态切换调试日志
 	if prev.DebugLog != settings.DebugLog {
 		utils.InitDebugLogger(a.store.DataDir(), settings.DebugLog)

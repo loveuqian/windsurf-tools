@@ -1,4 +1,4 @@
-//go:build windows
+//go:build windows || darwin
 
 package main
 
@@ -7,7 +7,10 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// startTray 在后台线程运行系统托盘（当前仅 Windows 发布包启用）。
+// startTray 在后台线程运行系统托盘。
+// Windows: 系统通知区图标
+// macOS: 顶部菜单栏图标（NSStatusItem，由 getlantern/systray 包装 Cocoa）
+// Linux 暂未启用（依赖 dbus + libappindicator，发布构建复杂）
 func (a *App) startTray() {
 	go func() {
 		systray.Run(a.onTrayReady, func() {})

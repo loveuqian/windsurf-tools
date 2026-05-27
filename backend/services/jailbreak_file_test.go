@@ -12,8 +12,10 @@ func TestResolveJailbreakOverrideFilePath_EmptyUsesDefault(t *testing.T) {
 	if got == "" {
 		t.Fatal("expected default path, got empty")
 	}
-	if !strings.HasSuffix(got, ".claude/override.md") {
-		t.Errorf("default path should end with .claude/override.md, got %q", got)
+	// 跨平台 separator：Windows 是 \，*nix 是 /，所以用 filepath.Join 拼期望后缀
+	want := filepath.Join(".claude", "override.md")
+	if !strings.HasSuffix(got, want) {
+		t.Errorf("default path should end with %q, got %q", want, got)
 	}
 }
 

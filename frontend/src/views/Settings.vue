@@ -610,7 +610,7 @@ const poolMemberEmails = computed(() => {
 const clashAutoSetupLoading = ref(false);
 const handleAutoSetupClash = async () => {
   if (!local.clash_controller_url) {
-    showToast("请先填控制器地址（如 http://127.0.0.1:9097）", "error");
+    showToast("请先填控制器地址（如 http://127.0.0.1:9090）", "error");
     return;
   }
   clashAutoSetupLoading.value = true;
@@ -1102,7 +1102,7 @@ onUnmounted(() => {
                       v-model="local.clash_controller_url"
                       type="text"
                       class="no-drag-region bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 px-4 py-2.5 rounded-[12px] font-mono text-[14px] focus:ring-2 focus:ring-ios-blue/30 outline-none transition-shadow"
-                      placeholder="http://127.0.0.1:9097"
+                      placeholder="http://127.0.0.1:9090"
                     />
                   </div>
                   <div class="flex-1 flex flex-col gap-1.5">

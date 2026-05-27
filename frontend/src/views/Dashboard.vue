@@ -36,6 +36,54 @@ const mitmStore = useMitmStatusStore();
 const relayStore = useRelayStatusStore();
 const refreshing = ref(false);
 
+// 上游代理状态（P6）——排障神器：让用户看到现在走 clash / 系统 / 直连
+type ProxySource =
+  | "direct"
+  | "clash+nodes"
+  | "clash"
+  | "system"
+  | "unknown";
+const proxyStatus = ref<{
+  source: ProxySource;
+  url: string;
+  last_applied_at: string;
+} | null>(null);
+const proxySourceLabel = (s?: ProxySource): string => {
+  switch (s) {
+    case "clash+nodes":
+      return "Clash + 轮换";
+    case "clash":
+      return "Clash";
+    case "system":
+      return "系统代理";
+    case "direct":
+      return "直连";
+    default:
+      return "—";
+  }
+};
+const proxySourceTone = (s?: ProxySource): string => {
+  switch (s) {
+    case "clash+nodes":
+      return "bg-violet-500/10 text-violet-700 dark:text-violet-300";
+    case "clash":
+      return "bg-sky-500/10 text-sky-700 dark:text-sky-300";
+    case "system":
+      return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
+    case "direct":
+      return "bg-slate-500/10 text-slate-700 dark:text-slate-300";
+    default:
+      return "bg-slate-500/10 text-slate-700 dark:text-slate-300";
+  }
+};
+const fetchProxyStatus = async () => {
+  try {
+    proxyStatus.value = await APIInfo.getUpstreamProxyStatus();
+  } catch {
+    proxyStatus.value = null;
+  }
+};
+
 const fetchRelayStatus = async () => {
   await relayStore.fetchStatus(true);
 };
@@ -47,6 +95,7 @@ const refreshOverview = async () => {
       accountStore.fetchAccounts(true),
       mitmStore.fetchStatus(),
       fetchRelayStatus(),
+      fetchProxyStatus(),
     ]);
   } finally {
     refreshing.value = false;
@@ -58,6 +107,7 @@ onMounted(() => {
     accountStore.ensureAccountsLoaded(),
     mitmStore.ensureStatusLoaded(),
     relayStore.ensureStatusLoaded(),
+    fetchProxyStatus(),
   ]);
 });
 
@@ -212,6 +262,18 @@ const topSummaryCards = computed(() => [
         : "暂未发现周额度阻断",
     tone: "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300",
     icon: Activity,
+  },
+  {
+    key: "upstream-proxy",
+    label: "上游代理",
+    value: proxySourceLabel(proxyStatus.value?.source),
+    detail: proxyStatus.value?.url
+      ? proxyStatus.value.url === "<direct>"
+        ? "未走任何代理"
+        : proxyStatus.value.url
+      : "未启动 / 未探活",
+    tone: proxySourceTone(proxyStatus.value?.source),
+    icon: Globe,
   },
 ]);
 
