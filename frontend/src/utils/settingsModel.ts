@@ -52,6 +52,7 @@ export function createDefaultSettings(): models.Settings {
     minimize_to_tray: false,
     desktop_notifications: true,
     silent_start: false,
+    mitm_route_mode: 'pool',
     openai_relay_enabled: false,
     openai_relay_port: 8787,
     openai_relay_secret: '',
@@ -113,6 +114,7 @@ export function normalizeSettings(raw: unknown): models.Settings {
     desktop_notifications:
       'desktop_notifications' in s ? Boolean(s.desktop_notifications) : true,
     silent_start: 'silent_start' in s ? Boolean(s.silent_start) : base.silent_start,
+    mitm_route_mode: ('mitm_route_mode' in s ? String((s as any).mitm_route_mode) : 'pool') as any,
     openai_relay_enabled: 'openai_relay_enabled' in s ? Boolean(s.openai_relay_enabled) : base.openai_relay_enabled,
     openai_relay_port: Math.max(1, Math.min(65535, Number(s.openai_relay_port) || 8787)),
     openai_relay_secret: String(s.openai_relay_secret ?? ''),
@@ -249,6 +251,8 @@ export type SettingsForm = {
   desktop_notifications: boolean
   /** 启动时不显示主窗口（托盘仍可打开） */
   silent_start: boolean
+  /** 总览 SWITCH 胶囊:pool=Windsurf 号池 / providers=第三方提供商。Phase 1 仅持久化与展示。 */
+  mitm_route_mode: 'pool' | 'providers'
   /** OpenAI 兼容中转服务器 */
   openai_relay_enabled: boolean
   openai_relay_port: number
@@ -308,6 +312,7 @@ export function settingsToForm(s: models.Settings): SettingsForm {
     minimize_to_tray: s.minimize_to_tray === true,
     desktop_notifications: (s as any).desktop_notifications !== false,
     silent_start: s.silent_start === true,
+    mitm_route_mode: ((s as any).mitm_route_mode === 'providers' ? 'providers' : 'pool'),
     openai_relay_enabled: s.openai_relay_enabled === true,
     openai_relay_port: Math.max(1, Number(s.openai_relay_port) || 8787),
     openai_relay_secret: String(s.openai_relay_secret ?? ''),
@@ -357,6 +362,7 @@ export function formToSettings(form: SettingsForm): models.Settings {
     minimize_to_tray: form.minimize_to_tray,
     desktop_notifications: form.desktop_notifications,
     silent_start: form.silent_start,
+    mitm_route_mode: form.mitm_route_mode,
     openai_relay_enabled: form.openai_relay_enabled,
     openai_relay_port: Math.max(1, Math.min(65535, Math.round(form.openai_relay_port) || 8787)),
     openai_relay_secret: (form.openai_relay_secret ?? '').trim(),

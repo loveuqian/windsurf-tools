@@ -541,6 +541,7 @@ export namespace models {
 	    minimize_to_tray: boolean;
 	    desktop_notifications: boolean;
 	    silent_start: boolean;
+	    mitm_route_mode: string;
 	    mitm_debug_dump: boolean;
 	    mitm_full_capture: boolean;
 	    static_cache_intercept: boolean;
@@ -594,6 +595,7 @@ export namespace models {
 	        this.minimize_to_tray = source["minimize_to_tray"];
 	        this.desktop_notifications = source["desktop_notifications"];
 	        this.silent_start = source["silent_start"];
+	        this.mitm_route_mode = source["mitm_route_mode"];
 	        this.mitm_debug_dump = source["mitm_debug_dump"];
 	        this.mitm_full_capture = source["mitm_full_capture"];
 	        this.static_cache_intercept = source["static_cache_intercept"];

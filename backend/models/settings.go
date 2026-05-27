@@ -36,6 +36,13 @@ type Settings struct {
 	// SilentStart 启动时不显示主窗口（仍可在托盘打开；也可用命令行 --silent）
 	SilentStart bool `json:"silent_start"`
 
+	// ── 路由模式 ──
+	// MitmRouteMode 总览面板上「号池 ↔ 提供商」胶囊切换。
+	//   "pool"      — Windsurf 号池接管(默认行为,与历史版本一致)
+	//   "providers" — 第三方 LLM 提供商池接管(Phase 1 仅记录 + UI 展示,
+	//                 后续 phase 接 MITM Cascade→provider 协议转换)
+	MitmRouteMode string `json:"mitm_route_mode"`
+
 	// ── MITM 代理 ──
 	// MitmDebugDump 开启后，MITM 拦截 GetChatMessage 时将请求/响应的 protobuf 字段树写入 proto_dumps/ 目录
 	MitmDebugDump bool `json:"mitm_debug_dump"`
@@ -125,6 +132,7 @@ func DefaultSettings() Settings {
 		MinimizeToTray:              false,
 		DesktopNotifications:        true,
 		SilentStart:                 false,
+		MitmRouteMode:               "pool",
 		MitmDebugDump:               false,
 		MitmFullCapture:             false,
 		StaticCacheIntercept:        true,

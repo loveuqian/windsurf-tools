@@ -81,6 +81,10 @@ func (s *Store) load() {
 		if _, ok := raw["quota_hot_poll_seconds"]; !ok {
 			s.settings.QuotaHotPollSeconds = 12
 		}
+		// 旧版无 mitm_route_mode 字段时默认 "pool"(沿用历史行为)
+		if _, ok := raw["mitm_route_mode"]; !ok {
+			s.settings.MitmRouteMode = "pool"
+		}
 	}
 }
 

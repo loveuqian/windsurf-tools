@@ -21,9 +21,16 @@ import PageLoadingSkeleton from "../components/common/PageLoadingSkeleton.vue";
 import SkeletonOverlay from "../components/common/SkeletonOverlay.vue";
 import MitmPanel from "../components/MitmPanel.vue";
 import { useAccountStore } from "../stores/useAccountStore";
+import { useProviderAccountStore } from "../stores/useAccountStore";
 import { useMainViewStore } from "../stores/useMainViewStore";
 import { useMitmStatusStore } from "../stores/useMitmStatusStore";
 import { useRelayStatusStore } from "../stores/useRelayStatusStore";
+import { useSettingsStore } from "../stores/useSettingsStore";
+import {
+  PROVIDER_DISPLAY_ORDER,
+  PROVIDER_META,
+  type ProviderID,
+} from "../utils/provider";
 import {
   getAccountHealth,
   isWeeklyQuotaBlocked,
@@ -31,9 +38,11 @@ import {
 } from "../utils/account";
 
 const accountStore = useAccountStore();
+const providerAccountStore = useProviderAccountStore();
 const mainView = useMainViewStore();
 const mitmStore = useMitmStatusStore();
 const relayStore = useRelayStatusStore();
+const settingsStore = useSettingsStore();
 const refreshing = ref(false);
 
 // 上游代理状态（P6）——排障神器：让用户看到现在走 clash / 系统 / 直连
@@ -108,6 +117,8 @@ onMounted(() => {
     mitmStore.ensureStatusLoaded(),
     relayStore.ensureStatusLoaded(),
     fetchProxyStatus(),
+    providerAccountStore.ensureAccountsLoaded(),
+    settingsStore.fetchSettings(),
   ]);
 });
 
@@ -202,6 +213,87 @@ const activeKey = computed(
   () => mitmStore.status?.pool_status?.find((item) => item.is_current) ?? null,
 );
 const relayRunning = computed(() => relayStore.status?.running === true);
+
+// ── 总览 SWITCH 路由模式 + 提供商汇总 ──
+// Phase 1:仅持久化 + UI 展示。MITM/Relay 实际仍走 windsurf 号池。
+// Phase 2 起接入协议转换层后,这里会真实分流。
+const routeMode = computed<"pool" | "providers">(() => {
+  const v = (settingsStore.settings as any)?.mitm_route_mode;
+  return v === "providers" ? "providers" : "pool";
+});
+
+const switchingRouteMode = ref(false);
+const setRouteMode = async (target: "pool" | "providers") => {
+  if (routeMode.value === target || switchingRouteMode.value) return;
+  switchingRouteMode.value = true;
+  try {
+    const next = {
+      ...(settingsStore.settings as any),
+      mitm_route_mode: target,
+    };
+    await settingsStore.updateSettings(next);
+    showToast(
+      target === "providers"
+        ? "已切到提供商接管(Phase 1: 仅展示, MITM 仍走号池)"
+        : "已切回 Windsurf 号池接管",
+      "success",
+    );
+  } catch (e: unknown) {
+    showToast(`切换失败: ${String(e)}`, "error");
+  } finally {
+    switchingRouteMode.value = false;
+  }
+};
+
+interface ProviderBucket {
+  id: ProviderID;
+  label: string;
+  badge: string;
+  accent: string;
+  total: number;
+  ready: number;
+}
+
+const providerBuckets = computed<ProviderBucket[]>(() => {
+  const map = new Map<ProviderID, { total: number; ready: number }>();
+  for (const id of PROVIDER_DISPLAY_ORDER) {
+    map.set(id, { total: 0, ready: 0 });
+  }
+  for (const acc of providerAccountStore.accounts) {
+    const provider = String(acc.provider || "").toLowerCase() as ProviderID;
+    const bucket = map.get(provider);
+    if (!bucket) continue;
+    bucket.total++;
+    const hasToken = Boolean(String(acc.auth_token || "").trim());
+    const active = String(acc.status || "active") !== "disabled";
+    if (hasToken && active) bucket.ready++;
+  }
+  return PROVIDER_DISPLAY_ORDER.map((id) => {
+    const meta = PROVIDER_META[id];
+    const stat = map.get(id) ?? { total: 0, ready: 0 };
+    return {
+      id,
+      label: meta.label,
+      badge: meta.badge,
+      accent: meta.accent,
+      total: stat.total,
+      ready: stat.ready,
+    };
+  });
+});
+
+const providerTotal = computed(() =>
+  providerBuckets.value.reduce((s, b) => s + b.total, 0),
+);
+const providerReady = computed(() =>
+  providerBuckets.value.reduce((s, b) => s + b.ready, 0),
+);
+const visibleProviderBuckets = computed(() =>
+  providerBuckets.value.filter((b) => b.total > 0),
+);
+const goProviders = () => {
+  mainView.activeTab = "Providers";
+};
 
 const topSummaryCards = computed(() => [
   {
@@ -368,7 +460,42 @@ const nextSteps = computed(() => {
               </div>
             </div>
 
-            <div class="flex flex-wrap gap-2">
+            <div class="flex flex-wrap items-center gap-2">
+              <!-- ★ 路由模式胶囊：号池 ↔ 提供商 -->
+              <div
+                class="no-drag-region inline-flex items-center gap-0.5 rounded-full border border-black/[0.06] bg-white/80 p-0.5 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.05]"
+                role="tablist"
+              >
+                <button
+                  type="button"
+                  class="ios-btn flex h-7 items-center gap-1.5 rounded-full px-3 text-[11px] font-bold transition-all"
+                  :class="
+                    routeMode === 'pool'
+                      ? 'bg-gradient-to-b from-[#3b82f6] to-ios-blue text-white shadow-md shadow-ios-blue/25'
+                      : 'text-ios-textSecondary hover:text-ios-text dark:text-ios-textSecondaryDark dark:hover:text-ios-textDark'
+                  "
+                  :disabled="switchingRouteMode"
+                  @click="setRouteMode('pool')"
+                >
+                  <Users class="h-3 w-3" stroke-width="2.6" />
+                  号池
+                </button>
+                <button
+                  type="button"
+                  class="ios-btn flex h-7 items-center gap-1.5 rounded-full px-3 text-[11px] font-bold transition-all"
+                  :class="
+                    routeMode === 'providers'
+                      ? 'bg-gradient-to-b from-violet-500 via-fuchsia-400 to-rose-300 text-white shadow-md shadow-fuchsia-500/25'
+                      : 'text-ios-textSecondary hover:text-ios-text dark:text-ios-textSecondaryDark dark:hover:text-ios-textDark'
+                  "
+                  :disabled="switchingRouteMode"
+                  @click="setRouteMode('providers')"
+                >
+                  <Globe class="h-3 w-3" stroke-width="2.6" />
+                  提供商
+                </button>
+              </div>
+
               <!-- ★ v1.6.0 平台兼容性检查 -->
               <button
                 type="button"
@@ -524,6 +651,83 @@ const nextSteps = computed(() => {
             >
               {{ card.detail }}
             </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ★ 提供商汇总(仅 routeMode=providers 时显示) -->
+      <section
+        v-if="routeMode === 'providers'"
+        class="ios-glass overflow-hidden rounded-[28px] border border-black/[0.05] dark:border-white/[0.06]"
+      >
+        <header
+          class="flex flex-wrap items-start justify-between gap-3 border-b border-black/[0.04] px-6 py-4 dark:border-white/[0.06]"
+        >
+          <div>
+            <h2
+              class="text-[16px] font-bold text-ios-text dark:text-ios-textDark"
+            >
+              提供商概览
+            </h2>
+            <p
+              class="mt-1 text-[12px] text-ios-textSecondary dark:text-ios-textSecondaryDark"
+            >
+              已切到「提供商」接管模式 — 第三方 LLM 厂商号池的可用 / 总数
+              ({{ providerReady }} / {{ providerTotal }})。
+              <span class="text-amber-700 dark:text-amber-300 font-semibold">
+                Phase 1: 仅展示，MITM/Relay 仍走号池上游。
+              </span>
+            </p>
+          </div>
+          <button
+            type="button"
+            class="no-drag-region inline-flex items-center gap-1.5 rounded-full bg-black/[0.04] px-3 py-1.5 text-[12px] font-bold text-ios-text dark:bg-white/[0.06] dark:text-ios-textDark hover:bg-black/[0.08] dark:hover:bg-white/[0.1] ios-btn"
+            @click="goProviders"
+          >
+            管理提供商
+            <ArrowRight class="h-3.5 w-3.5" stroke-width="2.4" />
+          </button>
+        </header>
+
+        <div
+          v-if="providerTotal === 0"
+          class="px-6 py-8 text-center text-[13px] text-ios-textSecondary dark:text-ios-textSecondaryDark"
+        >
+          号池里还没有提供商账号 —
+          <button
+            type="button"
+            class="font-semibold text-ios-blue ios-btn"
+            @click="goProviders"
+          >
+            前往「提供商」批量导入
+          </button>
+        </div>
+        <div
+          v-else
+          class="grid grid-cols-1 gap-3 p-6 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4"
+        >
+          <article
+            v-for="bucket in visibleProviderBuckets"
+            :key="bucket.id"
+            class="rounded-[18px] border border-black/[0.05] bg-white/80 p-4 shadow-sm dark:border-white/[0.06] dark:bg-white/[0.04]"
+          >
+            <div class="flex items-center justify-between gap-2">
+              <span
+                class="rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em]"
+                :class="bucket.badge"
+              >
+                {{ bucket.label }}
+              </span>
+              <span
+                class="rounded-full bg-black/[0.05] px-2 py-0.5 text-[10px] font-mono font-bold text-ios-textSecondary dark:bg-white/[0.08]"
+              >
+                {{ bucket.ready }}/{{ bucket.total }}
+              </span>
+            </div>
+            <div
+              class="mt-3 h-1 rounded-full bg-gradient-to-r"
+              :class="bucket.accent"
+            />
           </article>
         </div>
       </section>
