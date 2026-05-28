@@ -3015,10 +3015,13 @@ func (p *MitmProxy) pickPoolKeyForSession(convID string, excludeKeys ...string) 
 		}
 	}
 
+	// 在持锁期间统计绑定数（sessionBindingCount 要求 caller 持有 sessionsMu），
+	// 解锁后再用于日志，避免对 sessionMap 的并发读写竞争。
+	boundCount := p.sessionBindingCount(newKey)
 	p.sessionsMu.Unlock()
 	p.log("会话绑定: conv=%s... → key=%s... (绑定数=%d)",
 		convID[:minStr(8, len(convID))], newKey[:minStr(12, len(newKey))],
-		p.sessionBindingCount(newKey)+1)
+		boundCount)
 	return newKey, jwt
 }
 
