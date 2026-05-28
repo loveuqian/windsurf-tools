@@ -1,6 +1,6 @@
 # Windsurf Tools 🏄‍♂️
 
-[![Version](https://img.shields.io/badge/Version-v1.10.0-success)](https://github.com/seven7763/windsurf-tools/releases)
+[![Version](https://img.shields.io/badge/Version-v1.11.0-success)](https://github.com/seven7763/windsurf-tools/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)](#运行环境--prerequisites)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Built with Wails](https://img.shields.io/badge/Built%20with-Wails%20v2-red)](https://wails.io/)
@@ -280,6 +280,17 @@ SNIFF_BASE_DIR=/tmp/sniff go run ./tools/sniff                 # 跨平台抓包
 ---
 
 ## 🔧 最近修复 | Recent Fixes
+
+### v1.11.0 (2026-05-29)
+
+**并发稳定性 + 配额时区修复 + 新手引导 + CI/官网 | Concurrency Fix + Quota TZ Fix + Onboarding + CI/Site**
+
+- **修复会话绑定数据竞争** — `pickPoolKeyForSession` 释放 `sessionsMu` 后仍调用 `sessionBindingCount`(要求持锁),并发下与写 `sessionMap` 竞争。改为持锁期间取出计数,解锁后仅用于日志;顺带修正日志多余的 `+1`
+- **配额本机日历跨日按 now 时区判断** — `localCalendarDate` 原依赖进程全局 TZ,UTC 环境下 CST 跨日被误判为同日。改为按传入 `now` 的时区换算比较,生产行为不变
+- **新手引导向导** — 新增 `OnboardingWizard`,首启分步引导完成 CA 安装 / Hosts 配置 / 账号导入
+- **Accounts / Providers / Usage 视图打磨** — 号池视图大幅增强,提供商卡片与用量明细体验优化
+- **CI 修复 + 升级** — Verify 工作流前端构建移到 Go 步骤之前(修复 `//go:embed all:frontend/dist` 在 dist 不存在时失败);checkout/setup-go/setup-node 升级到 v6(迁出弃用的 Node 20)
+- **官网上线** — GitHub Pages 落地页 + 全套 SEO:<https://seven7763.github.io/windsurf-tools/>
 
 ### v1.10.0 (2026-05-28)
 
