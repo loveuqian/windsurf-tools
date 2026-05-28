@@ -156,6 +156,14 @@ func (r *OpenAIRelay) Status() OpenAIRelayStatus {
 	return s
 }
 
+// RuntimeConfig 返回当前运行配置（线程安全），供 app 层判断是否需重启 server。
+// 第一个返回值表示 server 是否在跑；后续 port/secret 仅 running=true 时有效。
+func (r *OpenAIRelay) RuntimeConfig() (running bool, port int, secret string) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.running, r.port, r.secret
+}
+
 // ── 鉴权 ──
 
 func (r *OpenAIRelay) checkAuth(w http.ResponseWriter, req *http.Request) bool {
@@ -176,66 +184,168 @@ func (r *OpenAIRelay) handleModels(w http.ResponseWriter, req *http.Request) {
 	if !r.checkAuth(w, req) {
 		return
 	}
-	models := []string{
-		// Windsurf
-		"cascade",
-		// OpenAI GPT
-		"gpt-3.5-turbo", "gpt-3.5-turbo-16k", "gpt-3.5-turbo-0125",
-		"gpt-4", "gpt-4-0125-preview", "gpt-4-1106-preview",
-		"gpt-4-32k", "gpt-4-turbo", "gpt-4-turbo-2024-04-09",
-		"gpt-4o", "gpt-4o-mini", "gpt-4o-latest",
-		"gpt-4o-2024-05-13", "gpt-4o-2024-08-06", "gpt-4o-2024-11-20", "chatgpt-4o-latest",
-		"gpt-4o-mini-2024-07-18",
-		"gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
-		"gpt-5", "gpt-5-nano", "gpt-5-pro",
-		"gpt-5.1", "gpt-5.1-codex", "gpt-5.1-codex-mini",
-		"gpt-5.2", "gpt-5.2-codex",
-		"gpt-5.3-codex", "gpt-5.3-codex-spark-preview",
-		"gpt-oss-120b",
-		// OpenAI o-series
-		"o1", "o1-mini", "o1-preview",
-		"o3", "o3-mini", "o3-pro",
-		// Anthropic Claude Standard API Names
-		"claude-3-opus-20240229", "claude-3-sonnet-20240229", "claude-3-haiku-20240307",
-		"claude-3-5-sonnet-20240620", "claude-3-5-sonnet-20241022", "claude-3-5-sonnet-latest",
-		"claude-3-5-haiku-20241022", "claude-3-5-haiku-latest",
-		// Anthropic Claude (Internal / Legacy Windsurf)
-		"claude-3-opus", "claude-3-sonnet",
-		"claude-3.5-haiku", "claude-3p5", "claude-3p7",
-		"claude-sonnet-4", "claude-sonnet-4.5", "claude-sonnet-4.6",
-		"claude-sonnet-4-6-1m", "claude-sonnet-4-6-thinking",
-		"claude-opus-4", "claude-opus-4.1", "claude-opus-4.5",
-		"claude-opus-4.6", "claude-opus-4-6-1m", "claude-opus-4-6-1m-max",
-		"claude-opus-4-6-thinking-1m", "claude-opus-4-6-thinking-1m-max",
-		"claude-opus-4-6-fast", "claude-opus-4-6-thinking-fast",
-		"claude-opus-4-5-20251101",
-		// Google Gemini
-		"gemini-2.0-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro",
-		"gemini-3.0-pro", "gemini-3.0-flash",
-		"gemini-3.1-pro", "gemini-3-1-pro-high", "gemini-3-1-pro-low",
-		"gemini-3-pro", "gemini-3-flash-preview",
-		// Meta Llama
-		"llama-3.1-70b-instruct", "llama-3.1-405b-instruct",
-		"llama-3.3-70b-instruct", "llama-3.3-70b-instruct-r1",
-		// DeepSeek
-		"deepseek-v3", "deepseek-r1", "deepseek-r1-distill-llama-70b",
-		// Qwen
-		"qwen-2.5-7b-instruct", "qwen-2.5-32b-instruct",
-		// Mistral
-		"devstral",
-		// Internal codenames
-		"crispy-unicorn", "crispy-unicorn-thinking",
-		"fierce-falcon", "robin-alpha-next", "skyhawk",
-	}
 	var data []map[string]interface{}
-	for _, m := range models {
-		data = append(data, map[string]interface{}{
-			"id": m, "object": "model", "owned_by": "windsurf",
-		})
+	for _, m := range relayModelCatalog {
+		data = append(data, m.toJSON())
 	}
 	resp := map[string]interface{}{"object": "list", "data": data}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// relayModelInfo 每个模型的元信息 + 定价
+type relayModelInfo struct {
+	ID             string  // 客户端用的名
+	Name           string  // 显示名
+	Provider       string  // openai / anthropic / google / deepseek / ...
+	Family         string  // gpt / claude / gemini / ...
+	ContextLength  int     // 上下文窗口
+	MaxOutput      int     // 最大输出 token
+	InputPrice     float64 // 输入定价 $/1M tokens
+	OutputPrice    float64 // 输出定价 $/1M tokens
+	SupportsVision bool
+	SupportsTools  bool
+	HiddenFree     bool // windsurf 隐藏免费模型
+}
+
+func (m relayModelInfo) toJSON() map[string]interface{} {
+	obj := map[string]interface{}{
+		"id":                 m.ID,
+		"object":             "model",
+		"owned_by":           m.Provider,
+		"name":               m.Name,
+		"provider":           m.Provider,
+		"family":             m.Family,
+		"context_length":     m.ContextLength,
+		"max_output_tokens":  m.MaxOutput,
+		"supports_vision":    m.SupportsVision,
+		"supports_tools":     m.SupportsTools,
+		"supports_streaming": true,
+	}
+	if m.InputPrice > 0 || m.OutputPrice > 0 {
+		obj["pricing"] = map[string]interface{}{
+			"input":    m.InputPrice,
+			"output":   m.OutputPrice,
+			"currency": "usd",
+			"unit":     "1M tokens",
+		}
+	}
+	if m.HiddenFree {
+		obj["hidden_free"] = true
+	}
+	return obj
+}
+
+// 2026-05-18 全量模型目录(对齐 wsapi catalog 104 模型 + 定价)
+// 定价参考 Windsurf 官方 + 上游 API 公开价
+var relayModelCatalog = []relayModelInfo{
+	// ── Claude ──────────────────────────────────────────
+	{ID: "claude-opus-4-7-medium", Name: "Claude Opus 4.7 Medium", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 32000, InputPrice: 15, OutputPrice: 75, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-opus-4.6", Name: "Claude Opus 4.6", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 32000, InputPrice: 15, OutputPrice: 75, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-opus-4.6-thinking", Name: "Claude Opus 4.6 Thinking", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 32000, InputPrice: 15, OutputPrice: 75, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-4.5-opus", Name: "Claude 4.5 Opus", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 32000, InputPrice: 15, OutputPrice: 75, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-4.5-opus-thinking", Name: "Claude 4.5 Opus Thinking", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 32000, InputPrice: 15, OutputPrice: 75, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-4.5-sonnet", Name: "Claude 4.5 Sonnet", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 16000, InputPrice: 3, OutputPrice: 15, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-4.5-sonnet-thinking", Name: "Claude 4.5 Sonnet Thinking", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 16000, InputPrice: 3, OutputPrice: 15, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-4.5-haiku", Name: "Claude 4.5 Haiku", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 8192, InputPrice: 0.8, OutputPrice: 4, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-sonnet-4.6", Name: "Claude Sonnet 4.6", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 16000, InputPrice: 3, OutputPrice: 15, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-sonnet-4.6-1m", Name: "Claude Sonnet 4.6 1M", Provider: "anthropic", Family: "claude", ContextLength: 1000000, MaxOutput: 16000, InputPrice: 3, OutputPrice: 15, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-sonnet-4.6-thinking", Name: "Claude Sonnet 4.6 Thinking", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 16000, InputPrice: 3, OutputPrice: 15, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-sonnet-4.6-thinking-1m", Name: "Claude Sonnet 4.6 Thinking 1M", Provider: "anthropic", Family: "claude", ContextLength: 1000000, MaxOutput: 16000, InputPrice: 3, OutputPrice: 15, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-4.1-opus", Name: "Claude 4.1 Opus", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 32000, InputPrice: 15, OutputPrice: 75, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-4.1-opus-thinking", Name: "Claude 4.1 Opus Thinking", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 32000, InputPrice: 15, OutputPrice: 75, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-4-opus", Name: "Claude 4 Opus", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 32000, InputPrice: 15, OutputPrice: 75, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-4-opus-thinking", Name: "Claude 4 Opus Thinking", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 32000, InputPrice: 15, OutputPrice: 75, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-4-sonnet", Name: "Claude 4 Sonnet", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 16000, InputPrice: 3, OutputPrice: 15, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-4-sonnet-thinking", Name: "Claude 4 Sonnet Thinking", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 16000, InputPrice: 3, OutputPrice: 15, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-3.7-sonnet", Name: "Claude 3.7 Sonnet", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 16000, InputPrice: 3, OutputPrice: 15, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-3.7-sonnet-thinking", Name: "Claude 3.7 Sonnet Thinking", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 16000, InputPrice: 3, OutputPrice: 15, SupportsVision: true, SupportsTools: true},
+	{ID: "claude-3.5-sonnet", Name: "Claude 3.5 Sonnet", Provider: "anthropic", Family: "claude", ContextLength: 200000, MaxOutput: 8192, InputPrice: 3, OutputPrice: 15, SupportsVision: true, SupportsTools: true},
+
+	// ── GPT ─────────────────────────────────────────────
+	{ID: "gpt-5", Name: "GPT-5", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 10, OutputPrice: 30, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5-high", Name: "GPT-5 High", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 10, OutputPrice: 30, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5-medium", Name: "GPT-5 Medium", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 5, OutputPrice: 15, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5-nano", Name: "GPT-5 Nano", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 0.5, OutputPrice: 2, SupportsVision: true, SupportsTools: true, HiddenFree: true},
+	{ID: "gpt-5-codex", Name: "GPT-5 Codex", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 10, OutputPrice: 30, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5.1", Name: "GPT-5.1", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 10, OutputPrice: 30, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5.1-fast", Name: "GPT-5.1 Fast", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 5, OutputPrice: 15, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5.1-high", Name: "GPT-5.1 High", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 10, OutputPrice: 30, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5.1-high-fast", Name: "GPT-5.1 High Fast", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 10, OutputPrice: 30, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5.1-medium", Name: "GPT-5.1 Medium", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 5, OutputPrice: 15, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5.1-medium-fast", Name: "GPT-5.1 Medium Fast", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 5, OutputPrice: 15, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5.1-low", Name: "GPT-5.1 Low", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 2, OutputPrice: 8, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5.1-low-fast", Name: "GPT-5.1 Low Fast", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 2, OutputPrice: 8, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5.2", Name: "GPT-5.2", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 10, OutputPrice: 30, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5.2-high", Name: "GPT-5.2 High", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 10, OutputPrice: 30, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5.2-high-fast", Name: "GPT-5.2 High Fast", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 10, OutputPrice: 30, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5.2-xhigh", Name: "GPT-5.2 XHigh", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 15, OutputPrice: 60, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5.2-xhigh-fast", Name: "GPT-5.2 XHigh Fast", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 15, OutputPrice: 60, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5.3-codex", Name: "GPT-5.3 Codex", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 10, OutputPrice: 30, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5.4-xhigh", Name: "GPT-5.4 XHigh", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 15, OutputPrice: 60, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5.4-high", Name: "GPT-5.4 High", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 10, OutputPrice: 30, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5.4-medium", Name: "GPT-5.4 Medium", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 5, OutputPrice: 15, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-5.4-low", Name: "GPT-5.4 Low", Provider: "openai", Family: "gpt", ContextLength: 272000, MaxOutput: 128000, InputPrice: 2, OutputPrice: 8, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-4o", Name: "GPT-4o", Provider: "openai", Family: "gpt", ContextLength: 128000, MaxOutput: 16384, InputPrice: 2.5, OutputPrice: 10, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-4o-mini", Name: "GPT-4o Mini", Provider: "openai", Family: "gpt", ContextLength: 128000, MaxOutput: 16384, InputPrice: 0.15, OutputPrice: 0.6, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-4.1", Name: "GPT-4.1", Provider: "openai", Family: "gpt", ContextLength: 1047576, MaxOutput: 32768, InputPrice: 2, OutputPrice: 8, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-4.1-mini", Name: "GPT-4.1 Mini", Provider: "openai", Family: "gpt", ContextLength: 1047576, MaxOutput: 32768, InputPrice: 0.4, OutputPrice: 1.6, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-4.1-nano", Name: "GPT-4.1 Nano", Provider: "openai", Family: "gpt", ContextLength: 1047576, MaxOutput: 32768, InputPrice: 0.1, OutputPrice: 0.4, SupportsVision: true, SupportsTools: true},
+	{ID: "gpt-oss-120b", Name: "GPT OSS 120B", Provider: "openai", Family: "gpt", ContextLength: 128000, MaxOutput: 16384, InputPrice: 1, OutputPrice: 4, SupportsVision: false, SupportsTools: true},
+
+	// ── o 系列 ──────────────────────────────────────────
+	{ID: "o3", Name: "O3", Provider: "openai", Family: "o", ContextLength: 200000, MaxOutput: 100000, InputPrice: 10, OutputPrice: 40, SupportsVision: true, SupportsTools: true},
+	{ID: "o3-high", Name: "O3 High", Provider: "openai", Family: "o", ContextLength: 200000, MaxOutput: 100000, InputPrice: 10, OutputPrice: 40, SupportsVision: true, SupportsTools: true},
+	{ID: "o3-mini", Name: "O3 Mini", Provider: "openai", Family: "o", ContextLength: 200000, MaxOutput: 100000, InputPrice: 1.1, OutputPrice: 4.4, SupportsVision: true, SupportsTools: true},
+	{ID: "o3-pro", Name: "O3 Pro", Provider: "openai", Family: "o", ContextLength: 200000, MaxOutput: 100000, InputPrice: 20, OutputPrice: 80, SupportsVision: true, SupportsTools: true},
+	{ID: "o4-mini", Name: "O4 Mini", Provider: "openai", Family: "o", ContextLength: 200000, MaxOutput: 100000, InputPrice: 1.1, OutputPrice: 4.4, SupportsVision: true, SupportsTools: true},
+
+	// ── Gemini ──────────────────────────────────────────
+	{ID: "gemini-2.5-flash", Name: "Gemini 2.5 Flash", Provider: "google", Family: "gemini", ContextLength: 1048576, MaxOutput: 65536, InputPrice: 0.15, OutputPrice: 0.6, SupportsVision: true, SupportsTools: true, HiddenFree: true},
+	{ID: "gemini-2.5-pro", Name: "Gemini 2.5 Pro", Provider: "google", Family: "gemini", ContextLength: 1048576, MaxOutput: 65536, InputPrice: 1.25, OutputPrice: 10, SupportsVision: true, SupportsTools: true},
+	{ID: "gemini-3.0-flash", Name: "Gemini 3.0 Flash", Provider: "google", Family: "gemini", ContextLength: 1048576, MaxOutput: 65536, InputPrice: 0.15, OutputPrice: 0.6, SupportsVision: true, SupportsTools: true},
+	{ID: "gemini-3.0-flash-high", Name: "Gemini 3.0 Flash High", Provider: "google", Family: "gemini", ContextLength: 1048576, MaxOutput: 65536, InputPrice: 0.15, OutputPrice: 0.6, SupportsVision: true, SupportsTools: true},
+	{ID: "gemini-3.0-flash-low", Name: "Gemini 3.0 Flash Low", Provider: "google", Family: "gemini", ContextLength: 1048576, MaxOutput: 65536, InputPrice: 0.075, OutputPrice: 0.3, SupportsVision: true, SupportsTools: true},
+	{ID: "gemini-3.0-flash-minimal", Name: "Gemini 3.0 Flash Minimal", Provider: "google", Family: "gemini", ContextLength: 1048576, MaxOutput: 65536, InputPrice: 0.075, OutputPrice: 0.3, SupportsVision: true, SupportsTools: true, HiddenFree: true},
+	{ID: "gemini-3.0-pro", Name: "Gemini 3.0 Pro", Provider: "google", Family: "gemini", ContextLength: 1048576, MaxOutput: 65536, InputPrice: 1.25, OutputPrice: 10, SupportsVision: true, SupportsTools: true},
+	{ID: "gemini-3.1-pro-high", Name: "Gemini 3.1 Pro High", Provider: "google", Family: "gemini", ContextLength: 1048576, MaxOutput: 65536, InputPrice: 1.25, OutputPrice: 10, SupportsVision: true, SupportsTools: true},
+	{ID: "gemini-3.1-pro-low", Name: "Gemini 3.1 Pro Low", Provider: "google", Family: "gemini", ContextLength: 1048576, MaxOutput: 65536, InputPrice: 0.3, OutputPrice: 2, SupportsVision: true, SupportsTools: true},
+
+	// ── DeepSeek ────────────────────────────────────────
+	{ID: "deepseek-3.2", Name: "DeepSeek 3.2", Provider: "deepseek", Family: "deepseek", ContextLength: 128000, MaxOutput: 32000, InputPrice: 0.27, OutputPrice: 1.1, SupportsVision: false, SupportsTools: true},
+	{ID: "deepseek-v3", Name: "DeepSeek V3", Provider: "deepseek", Family: "deepseek", ContextLength: 128000, MaxOutput: 32000, InputPrice: 0.27, OutputPrice: 1.1, SupportsVision: false, SupportsTools: true},
+	{ID: "deepseek-r1", Name: "DeepSeek R1", Provider: "deepseek", Family: "deepseek", ContextLength: 128000, MaxOutput: 32000, InputPrice: 0.55, OutputPrice: 2.19, SupportsVision: false, SupportsTools: true},
+
+	// ── GLM ─────────────────────────────────────────────
+	{ID: "glm-4.7", Name: "GLM 4.7", Provider: "zhipu", Family: "glm", ContextLength: 128000, MaxOutput: 16000, InputPrice: 0, OutputPrice: 0, SupportsVision: false, SupportsTools: true, HiddenFree: true},
+	{ID: "glm-5", Name: "GLM 5", Provider: "zhipu", Family: "glm", ContextLength: 128000, MaxOutput: 16000, InputPrice: 0, OutputPrice: 0, SupportsVision: false, SupportsTools: true, HiddenFree: true},
+	{ID: "glm-5.1", Name: "GLM 5.1", Provider: "zhipu", Family: "glm", ContextLength: 128000, MaxOutput: 16000, InputPrice: 0, OutputPrice: 0, SupportsVision: false, SupportsTools: true, HiddenFree: true},
+
+	// ── Kimi ────────────────────────────────────────────
+	{ID: "kimi-k2", Name: "Kimi K2", Provider: "moonshot", Family: "kimi", ContextLength: 128000, MaxOutput: 16000, InputPrice: 0, OutputPrice: 0, SupportsVision: false, SupportsTools: true, HiddenFree: true},
+	{ID: "kimi-k2-6", Name: "Kimi K2.6", Provider: "moonshot", Family: "kimi", ContextLength: 128000, MaxOutput: 16000, InputPrice: 0, OutputPrice: 0, SupportsVision: false, SupportsTools: true, HiddenFree: true},
+	{ID: "kimi-k2.5", Name: "Kimi K2.5", Provider: "moonshot", Family: "kimi", ContextLength: 128000, MaxOutput: 16000, InputPrice: 0, OutputPrice: 0, SupportsVision: false, SupportsTools: true, HiddenFree: true},
+
+	// ── Grok ────────────────────────────────────────────
+	{ID: "grok-3", Name: "Grok 3", Provider: "xai", Family: "grok", ContextLength: 131072, MaxOutput: 16384, InputPrice: 3, OutputPrice: 15, SupportsVision: true, SupportsTools: true},
+	{ID: "grok-3-mini-thinking", Name: "Grok 3 Mini Thinking", Provider: "xai", Family: "grok", ContextLength: 131072, MaxOutput: 16384, InputPrice: 0.3, OutputPrice: 0.5, SupportsVision: true, SupportsTools: true},
+	{ID: "grok-code-fast-1", Name: "Grok Code Fast 1", Provider: "xai", Family: "grok", ContextLength: 131072, MaxOutput: 16384, InputPrice: 0.3, OutputPrice: 0.5, SupportsVision: false, SupportsTools: true},
+
+	// ── MiniMax ─────────────────────────────────────────
+	{ID: "minimax-m2.5", Name: "MiniMax M2.5", Provider: "minimax", Family: "minimax", ContextLength: 128000, MaxOutput: 16000, InputPrice: 0, OutputPrice: 0, SupportsVision: false, SupportsTools: true, HiddenFree: true},
+
+	// ── SWE ─────────────────────────────────────────────
+	{ID: "swe-1.5", Name: "SWE 1.5", Provider: "windsurf", Family: "swe", ContextLength: 272000, MaxOutput: 128000, InputPrice: 0, OutputPrice: 0, SupportsVision: false, SupportsTools: true},
+	{ID: "swe-1.5-fast", Name: "SWE 1.5 Fast", Provider: "windsurf", Family: "swe", ContextLength: 272000, MaxOutput: 128000, InputPrice: 0, OutputPrice: 0, SupportsVision: false, SupportsTools: true},
+	{ID: "swe-1.6", Name: "SWE 1.6", Provider: "windsurf", Family: "swe", ContextLength: 272000, MaxOutput: 128000, InputPrice: 0, OutputPrice: 0, SupportsVision: false, SupportsTools: true},
+	{ID: "swe-1.6-fast", Name: "SWE 1.6 Fast", Provider: "windsurf", Family: "swe", ContextLength: 272000, MaxOutput: 128000, InputPrice: 0, OutputPrice: 0, SupportsVision: false, SupportsTools: true},
+
+	// ── Arena ───────────────────────────────────────────
+	{ID: "arena-fast", Name: "Arena Fast", Provider: "windsurf", Family: "arena", ContextLength: 200000, MaxOutput: 32000, InputPrice: 0, OutputPrice: 0, SupportsVision: false, SupportsTools: true},
+	{ID: "arena-smart", Name: "Arena Smart", Provider: "windsurf", Family: "arena", ContextLength: 200000, MaxOutput: 32000, InputPrice: 0, OutputPrice: 0, SupportsVision: false, SupportsTools: true},
+
+	// ── Cascade (default) ──────────────────────────────
+	{ID: "cascade", Name: "Cascade (Default)", Provider: "windsurf", Family: "cascade", ContextLength: 200000, MaxOutput: 32000, InputPrice: 0, OutputPrice: 0, SupportsVision: false, SupportsTools: true},
 }
 
 // ── /v1/chat/completions ──
@@ -534,11 +644,13 @@ func (r *OpenAIRelay) streamResponse(w http.ResponseWriter, resp *http.Response,
 	body := resp.Body
 	reader := bufio.NewReaderSize(body, 32768)
 	buf := make([]byte, 0, 65536)
+	// ★ 性能：tmp 移到循环外，避免每次 Read 都 make 8KB 临时 slice。
+	// 一次 chat 流式响应可能 100+ 次 Read，旧实现每次新建 → 800KB+ 临时分配 + GC 抖动。
+	tmp := make([]byte, 8192)
 	sawTerminalFrame := false
 	completionTokens := 0
 
 	for {
-		tmp := make([]byte, 8192)
 		n, readErr := reader.Read(tmp)
 		if n > 0 {
 			buf = append(buf, tmp[:n]...)
@@ -552,10 +664,15 @@ func (r *OpenAIRelay) streamResponse(w http.ResponseWriter, resp *http.Response,
 			if len(buf) < totalLen {
 				break
 			}
-			framePayload := append([]byte(nil), buf[5:totalLen]...)
-			buf = buf[totalLen:]
+			// ★ 性能：直接用 buf[5:totalLen] 切片，不复制。
+			// decodeStreamEnvelopePayload 解压后返回新 slice / 不压缩时显式 append nil 复制，
+			// 都不会保留对 buf 底层数组的引用 → 后面 buf = buf[totalLen:] 切片安全。
+			framePayload := buf[5:totalLen]
 
 			decodedPayload, err := decodeStreamEnvelopePayload(flags, framePayload)
+			// 在 decodeStreamEnvelopePayload 之后再 advance buf，避免 framePayload 在
+			// decodeStreamEnvelopePayload 调用期间被 buf 重用覆盖。
+			buf = buf[totalLen:]
 			if err != nil {
 				continue
 			}

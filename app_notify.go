@@ -25,3 +25,31 @@ func (a *App) notify(kind NotifyKind, eventKey, title, body string) {
 	}
 	a.notifier.Send(kind, eventKey, title, body)
 }
+
+// SendDesktopNotification 让前端能主动触发桌面通知。
+//
+// 入参 kind: "info" | "warn" | "success" | "error"。
+// eventKey: 60s 去重键，避免连续触发同事件刷屏。
+// 在 settings.desktop_notifications=false 时静默吃掉调用。
+//
+// 用法（前端）：
+//
+//	APIInfo.sendDesktopNotification("success", "switch-mitm",
+//	  "MITM 切号成功", "已切到 user@example.com")
+func (a *App) SendDesktopNotification(kind, eventKey, title, body string) {
+	if a == nil || a.notifier == nil {
+		return
+	}
+	var k NotifyKind
+	switch kind {
+	case "warn", "warning":
+		k = NotifyKindWarn
+	case "success":
+		k = NotifyKindSuccess
+	case "error":
+		k = NotifyKindError
+	default:
+		k = NotifyKindInfo
+	}
+	a.notifier.Send(k, eventKey, title, body)
+}

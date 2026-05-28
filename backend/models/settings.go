@@ -12,6 +12,21 @@ type Settings struct {
 	// AutoSwitchOnQuotaExhausted 在自动同步额度后，若当前 Windsurf 登录账号额度用尽则尝试切到下一席（依赖 windsurf_auth 与号池匹配）
 	AutoSwitchOnQuotaExhausted bool `json:"auto_switch_on_quota_exhausted"`
 
+	// ── F3: 切号调度策略 ──
+	// SwitchStrategy 决定 orderedSwitchCandidates / orderedMitmCandidates 的排序方式：
+	//   "fcfs"     —— 兼容现状：仅按凭证优先级（Token > APIKey > RefreshToken > Password）
+	//   "priority" —— 按 plan tone 顺序（默认 trial>pro>max>team>enterprise>free>unknown）
+	//                 思路：先消耗 trial（用完即弃），再用 pro
+	//   "balanced" —— 按额度剩余比例 desc（剩余多的优先用），让所有号月底分布更均匀
+	// 默认空字符串 = "fcfs"（向后兼容）
+	SwitchStrategy string `json:"switch_strategy"`
+	// SwitchCooldownEnabled 启用「冷却惩罚」：因 quota_exhausted/rate_limited 切走的号
+	// 在 SwitchCooldownBaseSec 秒内不再被选回；同一号连续命中冷却时间指数翻倍。
+	// 仅影响候选排序（不会影响手动 SwitchToAccount，那是用户明确意图）。
+	SwitchCooldownEnabled bool `json:"switch_cooldown_enabled"`
+	// SwitchCooldownBaseSec 冷却基础秒数，默认 300（5min）；范围 [30, 3600]。
+	SwitchCooldownBaseSec int `json:"switch_cooldown_base_sec"`
+
 	// ── 手动锁定（Manual Pin） ──
 	// 用户手动切到某账号后自动开启 Pin，所有自动切换（额度耗尽 / 限速 /
 	// 热轮询）都跳过；只能 UnpinManualAccount 主动解除。这样用户能 100%
@@ -109,6 +124,16 @@ type Settings struct {
 	ClashLatencyTestURL string `json:"clash_latency_test_url"`
 	// ClashLatencyMaxMs 仅保留延迟 <= 该值的节点（>0 生效；0=跳过测速）
 	ClashLatencyMaxMs int `json:"clash_latency_max_ms"`
+
+	// ── 窗口尺寸记忆（2.4） ──
+	// WindowWidth/Height 启动时还原；为 0 走 Wails Options 默认值（1100x750）。
+	// WindowX/Y 为 -1 走默认（屏幕居中）；其他值用作绝对坐标。
+	// 写盘由前端 ResizeMove debounce 1.5s 触发。
+	WindowWidth     int  `json:"window_width"`
+	WindowHeight    int  `json:"window_height"`
+	WindowX         int  `json:"window_x"`
+	WindowY         int  `json:"window_y"`
+	WindowMaximized bool `json:"window_maximized"`
 }
 
 func DefaultSettings() Settings {
@@ -120,6 +145,9 @@ func DefaultSettings() Settings {
 		QuotaCustomIntervalMinutes:  360,
 		AutoSwitchPlanFilter:        "all",
 		AutoSwitchOnQuotaExhausted:  true,
+		SwitchStrategy:              "fcfs",
+		SwitchCooldownEnabled:       false,
+		SwitchCooldownBaseSec:       300,
 		ManualPinEnabled:            false,
 		ManualPinAccountID:          "",
 		RotationPoolEnabled:         false,
@@ -160,5 +188,11 @@ func DefaultSettings() Settings {
 		ClashRotateOnRateLimit:      true,
 		ClashLatencyTestURL:         "http://www.gstatic.com/generate_204",
 		ClashLatencyMaxMs:           800,
+		// 2.4: 窗口尺寸记忆默认值 — 0/0/-1/-1 表示首次运行用 options.go 的内置默认（居中 1100x750）
+		WindowWidth:     0,
+		WindowHeight:    0,
+		WindowX:         -1,
+		WindowY:         -1,
+		WindowMaximized: false,
 	}
 }

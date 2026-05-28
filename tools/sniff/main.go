@@ -33,11 +33,32 @@ const (
 var dumpDir string
 var logFile *os.File
 
-const baseDir = `E:\windsurf切号\windsurf-tools-wails`
+// resolveSniffBaseDir 跨平台基目录解析：
+//   - 优先 SNIFF_BASE_DIR 环境变量（用户显式指定）
+//   - 否则使用当前工作目录（go run 时即仓库根）下的 .sniff/
+//
+// 之前硬编码 `E:\windsurf切号\windsurf-tools-wails` 在 macOS / Linux 上
+// 会让 os.OpenFile 失败 → log.Fatalf 退出，开发者根本跑不起来。
+func resolveSniffBaseDir() string {
+	if v := strings.TrimSpace(os.Getenv("SNIFF_BASE_DIR")); v != "" {
+		return v
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		return filepath.Join(cwd, ".sniff")
+	}
+	// 最后兜底 home 目录
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".windsurf-tools-sniff")
+	}
+	return "."
+}
 
 func init() {
+	baseDir := resolveSniffBaseDir()
 	dumpDir = filepath.Join(baseDir, "sniff_dumps")
-	os.MkdirAll(dumpDir, 0755)
+	if err := os.MkdirAll(dumpDir, 0755); err != nil {
+		log.Fatalf("无法创建 dump 目录 %s: %v", dumpDir, err)
+	}
 	logPath := filepath.Join(baseDir, "sniff_log.txt")
 	var err error
 	logFile, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
@@ -45,6 +66,7 @@ func init() {
 		log.Fatalf("无法创建日志文件 %s: %v", logPath, err)
 	}
 	log.SetOutput(io.MultiWriter(os.Stderr, logFile))
+	log.Printf("[sniff] base dir: %s (set SNIFF_BASE_DIR to override)", baseDir)
 }
 
 func main() {

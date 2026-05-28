@@ -48,41 +48,150 @@ func buildGenerationConfig() []byte {
 }
 
 // windsurf model enum 映射表（OpenAI 模型名 → Windsurf 内部 enum 字符串）
+// 2026-05-18 更新：对齐 wsapi catalog 全量 104 模型
 var modelEnumMap = map[string]string{
 	// 直通
 	"cascade": "",
 
-	// GPT 系列
-	"gpt-4o":       "MODEL_GPT_4O",
-	"gpt-4o-mini":  "MODEL_GPT_4O_MINI",
-	"gpt-4.1":      "MODEL_GPT_4_1",
-	"gpt-4.1-mini": "MODEL_GPT_4_1_MINI",
-	"gpt-4.1-nano": "MODEL_GPT_4_1_NANO",
+	// ── Claude ──────────────────────────────────────────
+	"claude-3.5-sonnet":             "MODEL_CLAUDE_3_5_SONNET",
+	"claude-3.5-haiku":              "MODEL_CLAUDE_3_5_HAIKU",
+	"claude-3p5":                    "MODEL_CLAUDE_3_5_SONNET",
+	"claude-3.7-sonnet":             "MODEL_CLAUDE_3_7_SONNET",
+	"claude-3.7-sonnet-thinking":    "MODEL_CLAUDE_3_7_SONNET",
+	"claude-3p7":                    "MODEL_CLAUDE_3_7_SONNET",
+	"claude-4-sonnet":               "MODEL_CLAUDE_SONNET_4",
+	"claude-4-sonnet-thinking":      "MODEL_CLAUDE_SONNET_4",
+	"claude-4-opus":                 "MODEL_CLAUDE_OPUS_4",
+	"claude-4-opus-thinking":        "MODEL_CLAUDE_OPUS_4",
+	"claude-4.1-opus":               "MODEL_CLAUDE_OPUS_4_1",
+	"claude-4.1-opus-thinking":      "MODEL_CLAUDE_OPUS_4_1",
+	"claude-sonnet-4":               "MODEL_CLAUDE_SONNET_4",
+	"claude-sonnet-4.5":             "MODEL_CLAUDE_SONNET_4_5",
+	"claude-sonnet-4.6":             "MODEL_CLAUDE_SONNET_4_6",
+	"claude-sonnet-4.6-1m":          "MODEL_CLAUDE_SONNET_4_6",
+	"claude-sonnet-4.6-thinking":    "MODEL_CLAUDE_SONNET_4_6",
+	"claude-sonnet-4.6-thinking-1m": "MODEL_CLAUDE_SONNET_4_6",
+	"claude-opus-4":                 "MODEL_CLAUDE_OPUS_4",
+	"claude-4.5-haiku":              "MODEL_CLAUDE_4_5_HAIKU",
+	"claude-4.5-sonnet":             "MODEL_CLAUDE_SONNET_4_5",
+	"claude-4.5-sonnet-thinking":    "MODEL_CLAUDE_SONNET_4_5",
+	"claude-4.5-opus":               "MODEL_CLAUDE_OPUS_4_5",
+	"claude-4.5-opus-thinking":      "MODEL_CLAUDE_OPUS_4_5",
+	"claude-opus-4.6":               "claude-opus-4-6",
+	"claude-opus-4.6-thinking":      "claude-opus-4-6",
+	"claude-opus-4-7-medium":        "claude-opus-4-7-medium",
 
-	// o 系列
+	// ── GPT ─────────────────────────────────────────────
+	"gpt-4o":                    "MODEL_GPT_4O",
+	"gpt-4o-mini":               "MODEL_GPT_4O_MINI",
+	"gpt-4.1":                   "MODEL_GPT_4_1",
+	"gpt-4.1-mini":              "MODEL_GPT_4_1_MINI",
+	"gpt-4.1-nano":              "MODEL_GPT_4_1_NANO",
+	"gpt-5":                     "gpt-5-4-high",
+	"gpt-5-high":                "gpt-5-4-high",
+	"gpt-5-medium":              "gpt-5-4-medium",
+	"gpt-5-nano":                "gpt-5-4-nano",
+	"gpt-5-codex":               "gpt-5-codex",
+	"gpt-5.1":                   "gpt-5.1",
+	"gpt-5.1-fast":              "gpt-5.1-fast",
+	"gpt-5.1-high":              "gpt-5.1-high",
+	"gpt-5.1-high-fast":         "gpt-5.1-high-fast",
+	"gpt-5.1-medium":            "gpt-5.1-medium",
+	"gpt-5.1-medium-fast":       "gpt-5.1-medium-fast",
+	"gpt-5.1-low":               "gpt-5.1-low",
+	"gpt-5.1-low-fast":          "gpt-5.1-low-fast",
+	"gpt-5.1-codex-low":         "gpt-5.1-codex-low",
+	"gpt-5.1-codex-medium":      "gpt-5.1-codex-medium",
+	"gpt-5.1-codex-mini":        "gpt-5.1-codex-mini",
+	"gpt-5.1-codex-mini-low":    "gpt-5.1-codex-mini-low",
+	"gpt-5.1-codex-max-high":    "gpt-5.1-codex-max-high",
+	"gpt-5.1-codex-max-low":     "gpt-5.1-codex-max-low",
+	"gpt-5.1-codex-max-medium":  "gpt-5.1-codex-max-medium",
+	"gpt-5.2":                   "gpt-5.2",
+	"gpt-5.2-high":              "gpt-5.2-high",
+	"gpt-5.2-high-fast":         "gpt-5.2-high-fast",
+	"gpt-5.2-medium-fast":       "gpt-5.2-medium-fast",
+	"gpt-5.2-low":               "gpt-5.2-low",
+	"gpt-5.2-low-fast":          "gpt-5.2-low-fast",
+	"gpt-5.2-xhigh":             "gpt-5.2-xhigh",
+	"gpt-5.2-xhigh-fast":        "gpt-5.2-xhigh-fast",
+	"gpt-5.2-none":              "gpt-5.2-none",
+	"gpt-5.2-none-fast":         "gpt-5.2-none-fast",
+	"gpt-5.2-codex-high":        "gpt-5.2-codex-high",
+	"gpt-5.2-codex-high-fast":   "gpt-5.2-codex-high-fast",
+	"gpt-5.2-codex-low":         "gpt-5.2-codex-low",
+	"gpt-5.2-codex-low-fast":    "gpt-5.2-codex-low-fast",
+	"gpt-5.2-codex-medium":      "gpt-5.2-codex-medium",
+	"gpt-5.2-codex-medium-fast": "gpt-5.2-codex-medium-fast",
+	"gpt-5.2-codex-xhigh":       "gpt-5.2-codex-xhigh",
+	"gpt-5.2-codex-xhigh-fast":  "gpt-5.2-codex-xhigh-fast",
+	"gpt-5.3-codex":             "gpt-5.3-codex",
+	"gpt-5.4-high":              "gpt-5.4-high",
+	"gpt-5.4-medium":            "gpt-5.4-medium",
+	"gpt-5.4-low":               "gpt-5.4-low",
+	"gpt-5.4-xhigh":             "gpt-5.4-xhigh",
+	"gpt-5.4-none":              "gpt-5.4-none",
+	"gpt-5.4-mini-high":         "gpt-5.4-mini-high",
+	"gpt-5.4-mini-low":          "gpt-5.4-mini-low",
+	"gpt-5.4-mini-medium":       "gpt-5.4-mini-medium",
+	"gpt-5.4-mini-xhigh":        "gpt-5.4-mini-xhigh",
+	"gpt-oss-120b":              "gpt-oss-120b",
+
+	// ── o 系列 ──────────────────────────────────────────
+	"o3":      "MODEL_O3",
 	"o3-mini": "MODEL_O3_MINI",
+	"o3-high": "o3-high",
+	"o3-pro":  "o3-pro",
+	"o4-mini": "o4-mini",
 
-	// Claude
-	"claude-3.5-haiku":  "MODEL_CLAUDE_3_5_HAIKU",
-	"claude-3p5":        "MODEL_CLAUDE_3_5_SONNET",
-	"claude-3p7":        "MODEL_CLAUDE_3_7_SONNET",
-	"claude-sonnet-4":   "MODEL_CLAUDE_SONNET_4",
-	"claude-sonnet-4.5": "MODEL_CLAUDE_SONNET_4_5",
-	"claude-sonnet-4.6": "MODEL_CLAUDE_SONNET_4_6",
-	"claude-opus-4":     "MODEL_CLAUDE_OPUS_4",
+	// ── Gemini ──────────────────────────────────────────
+	"gemini-2.0-flash":         "MODEL_GOOGLE_GEMINI_2_0_FLASH",
+	"gemini-2.5-flash":         "MODEL_GOOGLE_GEMINI_2_5_FLASH",
+	"gemini-2.5-flash-lite":    "MODEL_GOOGLE_GEMINI_2_5_FLASH_LITE",
+	"gemini-2.5-pro":           "MODEL_GOOGLE_GEMINI_2_5_PRO",
+	"gemini-3.0-pro":           "MODEL_GOOGLE_GEMINI_3_0_PRO",
+	"gemini-3.0-flash":         "MODEL_GOOGLE_GEMINI_3_0_FLASH",
+	"gemini-3.0-flash-high":    "MODEL_GOOGLE_GEMINI_3_0_FLASH_HIGH",
+	"gemini-3.0-flash-low":     "MODEL_GOOGLE_GEMINI_3_0_FLASH_LOW",
+	"gemini-3.0-flash-minimal": "MODEL_GOOGLE_GEMINI_3_0_FLASH_MINIMAL",
+	"gemini-3.1-pro-high":      "gemini-3.1-pro-high",
+	"gemini-3.1-pro-low":       "gemini-3.1-pro-low",
 
-	// Gemini
-	"gemini-2.0-flash":      "MODEL_GOOGLE_GEMINI_2_0_FLASH",
-	"gemini-2.5-flash-lite": "MODEL_GOOGLE_GEMINI_2_5_FLASH_LITE",
-	"gemini-2.5-pro":        "MODEL_GOOGLE_GEMINI_2_5_PRO",
-	"gemini-3.0-pro":        "MODEL_GOOGLE_GEMINI_3_0_PRO",
-	"gemini-3.0-flash":      "MODEL_GOOGLE_GEMINI_3_0_FLASH",
+	// ── DeepSeek ────────────────────────────────────────
+	"deepseek-v3":  "MODEL_DEEPSEEK_V3",
+	"deepseek-r1":  "MODEL_DEEPSEEK_R1",
+	"deepseek-3.2": "deepseek-3.2",
 
-	// DeepSeek
-	"deepseek-v3": "MODEL_DEEPSEEK_V3",
-	"deepseek-r1": "MODEL_DEEPSEEK_R1",
+	// ── GLM ─────────────────────────────────────────────
+	"glm-4.7": "glm-4.7",
+	"glm-5":   "glm-5",
+	"glm-5.1": "glm-5.1",
 
-	// Qwen
+	// ── Kimi ────────────────────────────────────────────
+	"kimi-k2":   "kimi-k2",
+	"kimi-k2-6": "kimi-k2-6",
+	"kimi-k2.5": "kimi-k2.5",
+
+	// ── Grok ────────────────────────────────────────────
+	"grok-3":               "grok-3",
+	"grok-3-mini-thinking": "grok-3-mini-thinking",
+	"grok-code-fast-1":     "grok-code-fast-1",
+
+	// ── MiniMax ─────────────────────────────────────────
+	"minimax-m2.5": "minimax-m2.5",
+
+	// ── SWE ─────────────────────────────────────────────
+	"swe-1.5":      "MODEL_SWE_1_5",
+	"swe-1.5-fast": "MODEL_SWE_1_5_FAST",
+	"swe-1.6":      "MODEL_SWE_1_6",
+	"swe-1.6-fast": "MODEL_SWE_1_6_FAST",
+
+	// ── Arena ───────────────────────────────────────────
+	"arena-fast":  "arena-fast",
+	"arena-smart": "arena-smart",
+
+	// ── Qwen ────────────────────────────────────────────
 	"qwen-2.5-32b-instruct": "MODEL_QWEN_2_5_CODER_32B_INSTRUCT",
 }
 

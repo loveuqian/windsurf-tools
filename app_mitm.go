@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
 	"windsurf-tools-wails/backend/models"
 	"windsurf-tools-wails/backend/services"
 	"windsurf-tools-wails/backend/utils"
@@ -20,8 +21,9 @@ import (
 // ★ 传入 Plan 信息，使 MITM 代理能区分 Pro/Trial key（用于全局限速退避时优先 Pro）
 // F7-REMOVAL: 下面 SmartFriend 三行注释 + 下面 settings.SmartFriendEnabled 传参一并删除
 // ★ SmartFriend(F7) 开启时，服务端按 SMART_FRIEND 计费、绕过日/周限额，
-//    「显示已耗尽」的账号实际仍可用，必须保留在号池里——否则手动切号会
-//    因「号池找不到 key」而失败。
+//
+//	「显示已耗尽」的账号实际仍可用，必须保留在号池里——否则手动切号会
+//	因「号池找不到 key」而失败。
 func (a *App) syncMitmPoolKeys() {
 	accounts := a.store.GetAllAccounts()
 	settings := a.store.GetSettings()
@@ -132,6 +134,8 @@ func (a *App) SwitchMitmToAccount(id string) (string, error) {
 	if apiKey == "" {
 		return "", fmt.Errorf("该账号没有 API Key，无法用于 MITM 手动切号")
 	}
+	// F3: 用户手动切到此账号 → 明确意图，清掉其冷却（如果之前因 quota/rate_limited 被冷却）
+	switchCooldown.clear(id)
 	res, err := a.switchMitmAccountAndSyncLocalSession(acc)
 	if err == nil {
 		a.setManualPin(id)
@@ -391,6 +395,24 @@ func (a *App) GetMitmCAPath() string {
 	return services.GetCACertPath()
 }
 
+// ClearMitmKeyExhausted 手动解除单个 key 的「额度耗尽」锁定。
+// 用户在「自动切下一席」关闭后或误判锁定时使用。
+// 返回 true 表示真的解锁了一个号。
+func (a *App) ClearMitmKeyExhausted(apiKey string) bool {
+	if a.mitmProxy == nil {
+		return false
+	}
+	return a.mitmProxy.ClearKeyExhausted(apiKey)
+}
+
+// ClearAllMitmExhausted 批量解除号池中所有「额度耗尽」锁定。返回解锁个数。
+func (a *App) ClearAllMitmExhausted() int {
+	if a.mitmProxy == nil {
+		return 0
+	}
+	return a.mitmProxy.ClearAllExhausted()
+}
+
 // ToggleMitmDebugDump 开启/关闭 MITM proto dump
 func (a *App) ToggleMitmDebugDump(enabled bool) {
 	a.mitmProxy.SetDebugDump(enabled)
@@ -399,15 +421,9 @@ func (a *App) ToggleMitmDebugDump(enabled bool) {
 	a.store.UpdateSettings(settings)
 }
 
-// GetMitmDebugDumpEnabled 返回当前 debug dump 状态
-func (a *App) GetMitmDebugDumpEnabled() bool {
-	return a.mitmProxy.DebugDumpEnabled()
-}
-
-// GetProtoDumpDir 返回 proto dump 文件目录路径
-func (a *App) GetProtoDumpDir() string {
-	return services.ProtoDumpDir()
-}
+// 注：原 GetMitmDebugDumpEnabled / GetProtoDumpDir 已删除：
+//   - 前端直接读 settings.mitm_debug_dump 即可，不需要单独查 proxy 内存状态
+//   - 用户访问 dump 目录走 RevealProtoDumpDir（带 Finder 打开）；裸路径不再单独暴露
 
 // ToggleMitmFullCapture 开启/关闭全量抓包
 func (a *App) ToggleMitmFullCapture(enabled bool) {
@@ -422,9 +438,33 @@ func (a *App) GetMitmFullCaptureEnabled() bool {
 	return a.mitmProxy.FullCaptureEnabled()
 }
 
-// GetCaptureDir 返回全量抓包目录路径
-func (a *App) GetCaptureDir() string {
-	return services.CaptureDir()
+// 注：原 GetCaptureDir 已删除 —— 用户访问抓包目录走 RevealCaptureDir（带 Finder 打开）；
+// 裸路径不再单独暴露给前端。
+
+// RevealCaptureDir 在系统文件管理器中打开全量抓包目录。
+// 目录不存在时先创建（开关刚打开还没有请求落盘时）。
+// 返回路径以便前端显示；error 表示 Finder/Explorer 调用失败。
+func (a *App) RevealCaptureDir() (string, error) {
+	dir := services.CaptureDir()
+	if dir == "" {
+		return "", fmt.Errorf("capture dir 未配置")
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return dir, fmt.Errorf("创建目录失败: %w", err)
+	}
+	return dir, revealPathInFileManager(dir)
+}
+
+// RevealProtoDumpDir 在系统文件管理器中打开 protobuf dump 目录。
+func (a *App) RevealProtoDumpDir() (string, error) {
+	dir := services.ProtoDumpDir()
+	if dir == "" {
+		return "", fmt.Errorf("proto dump dir 未配置")
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return dir, fmt.Errorf("创建目录失败: %w", err)
+	}
+	return dir, revealPathInFileManager(dir)
 }
 
 func (a *App) describeMitmKey(apiKey string) string {
@@ -481,6 +521,10 @@ func (a *App) handleMitmKeyAccessDenied(apiKey, detail string) {
 		return
 	}
 	a.syncMitmPoolKeys()
+	// F3: 触发冷却（ratelimit 类）—— 同账号连续被拒会指数退避
+	if s := a.store.GetSettings(); s.SwitchCooldownEnabled {
+		switchCooldown.apply(accID, "ratelimit", s.SwitchCooldownBaseSec)
+	}
 	utils.DLog("[回调] onKeyAccessDenied: 已持久化 %s status=%s plan=%s", labelAccountResult(acc), acc.Status, acc.PlanName)
 }
 
@@ -495,6 +539,21 @@ func (a *App) handleMitmCurrentKeyChanged(apiKey, reason string) {
 	reason = strings.TrimSpace(reason)
 	if a == nil || a.store == nil || apiKey == "" {
 		return
+	}
+	// F2: 记录到 switch_history.jsonl（无论后面是否同步本地登录态都记，
+	// Dashboard 折线图覆盖所有切号路径）
+	if a.switchHistory != nil {
+		ev := SwitchEvent{
+			At:       time.Now().Format(time.RFC3339),
+			KeyShort: shortHexKey(apiKey),
+			Reason:   normalizeSwitchReason(reason),
+		}
+		if accID := findAccountIDForMITMAPIKey(a.store.GetAllAccounts(), apiKey); accID != "" {
+			if acc, err := a.store.GetAccount(accID); err == nil {
+				ev.Email = acc.Email
+			}
+		}
+		go a.switchHistory.Append(ev)
 	}
 	if !shouldSyncMitmLocalSessionOnKeyChange(reason) {
 		return
@@ -545,6 +604,29 @@ func (a *App) syncSmartFriendConfig() {
 	}
 	s := a.store.GetSettings()
 	a.mitmProxy.SetSmartFriendEnabled(s.SmartFriendEnabled)
+}
+
+// syncMitmAutoSwitchOnQuotaExhausted 把用户「额度耗尽时自动切下一席」开关推给 MITM。
+// 关闭后：MITM 收到 quota_exhausted 不再锁号 / 切号 / 进冷却，错误透传给 IDE。
+// 启动时（app.go）和 settings 更新时（app_settings.go）都会调用。
+func (a *App) syncMitmAutoSwitchOnQuotaExhausted() {
+	if a.mitmProxy == nil || a.store == nil {
+		return
+	}
+	s := a.store.GetSettings()
+	a.mitmProxy.SetAutoSwitchOnQuotaExhausted(s.AutoSwitchOnQuotaExhausted)
+}
+
+// syncMitmDebugAndCapture 把 MitmDebugDump / MitmFullCapture 同步到 proxy。
+// 启动时由 attachMitmRuntimeSwitches 处理；这里覆盖 UpdateSettings / ImportSettings
+// 路径 —— 没有这个 sync，导入配置后这两项要重启才生效。
+func (a *App) syncMitmDebugAndCapture() {
+	if a.mitmProxy == nil || a.store == nil {
+		return
+	}
+	s := a.store.GetSettings()
+	a.mitmProxy.SetDebugDump(s.MitmDebugDump)
+	a.mitmProxy.SetFullCapture(s.MitmFullCapture)
 }
 
 func (a *App) syncForgeConfig() {
@@ -636,15 +718,15 @@ func (a *App) ListJailbreakPresets() []services.JailbreakPreset {
 // GetJailbreakRuntime 一次性返回当前生效状态 + 注入统计 + 文件信息，
 // 给 UI 状态面板用。比让前端调 3 个 API 拼接更优。
 type JailbreakRuntime struct {
-	Enabled       bool                              `json:"enabled"`
-	PresetID      string                            `json:"preset_id"`
-	Source        string                            `json:"source"`            // inline / file / preset:xxx
-	ActiveText    string                            `json:"active_text"`       // 当前生效的完整文本
-	ActiveLength  int                               `json:"active_length"`     // 字符数
-	FilePath      string                            `json:"file_path,omitempty"`
-	FileStatus    *services.JailbreakFileStatus     `json:"file_status,omitempty"`
-	Stats         services.JailbreakStatsSnapshot   `json:"stats"`
-	WarnAnthropic bool                              `json:"warn_anthropic"`    // 检测到 cyber 雷词
+	Enabled       bool                            `json:"enabled"`
+	PresetID      string                          `json:"preset_id"`
+	Source        string                          `json:"source"`        // inline / file / preset:xxx
+	ActiveText    string                          `json:"active_text"`   // 当前生效的完整文本
+	ActiveLength  int                             `json:"active_length"` // 字符数
+	FilePath      string                          `json:"file_path,omitempty"`
+	FileStatus    *services.JailbreakFileStatus   `json:"file_status,omitempty"`
+	Stats         services.JailbreakStatsSnapshot `json:"stats"`
+	WarnAnthropic bool                            `json:"warn_anthropic"` // 检测到 cyber 雷词
 }
 
 func (a *App) GetJailbreakRuntime() JailbreakRuntime {
@@ -737,11 +819,5 @@ func (a *App) staticCacheDir() string {
 	return a.store.DataDir() + string(os.PathSeparator) + "static"
 }
 
-// GetStaticCacheDir is exposed to the frontend.
-func (a *App) GetStaticCacheDir() string {
-	dir := a.staticCacheDir()
-	if dir != "" {
-		os.MkdirAll(dir, 0755)
-	}
-	return dir
-}
+// 注：原 GetStaticCacheDir 已删除 —— Static cache 是 .bin 文件直返的性能优化，
+// 用户层面不需要查看。目录创建由 syncStaticCacheConfig 在 cache 路径首次使用前完成。

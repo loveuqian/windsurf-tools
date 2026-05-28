@@ -649,7 +649,7 @@ func withTestTrafficLog(t *testing.T) string {
 	trafficLogMu.Lock()
 	oldFile := trafficLogFile
 	oldPath := trafficLogPath
-	oldSeq := trafficSeq
+	oldSeq := trafficSeq.Load()
 
 	path := filepath.Join(t.TempDir(), "traffic.log")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
@@ -659,7 +659,7 @@ func withTestTrafficLog(t *testing.T) string {
 	}
 	trafficLogFile = file
 	trafficLogPath = path
-	trafficSeq = 0
+	trafficSeq.Store(0)
 	trafficLogMu.Unlock()
 
 	t.Cleanup(func() {
@@ -669,7 +669,7 @@ func withTestTrafficLog(t *testing.T) string {
 		}
 		trafficLogFile = oldFile
 		trafficLogPath = oldPath
-		trafficSeq = oldSeq
+		trafficSeq.Store(oldSeq)
 		trafficLogMu.Unlock()
 	})
 

@@ -20,6 +20,8 @@ import (
 	"sync/atomic"
 	"time"
 	"windsurf-tools-wails/backend/utils"
+
+	"golang.org/x/net/http2"
 )
 
 // ── 动态 DNS 解析（兼容 VPN / IP 漂移） ──
@@ -207,6 +209,21 @@ func (s *PoolKeyState) isAvailable() bool {
 	return false
 }
 
+// clearExhausted 解除「额度耗尽」锁定。仅清除 RuntimeExhausted + 冷却 + 健康标志，
+// 不影响 Disabled（用户主动停用的号不会被这里清除）。
+// 用于「自动切下一席」关闭后批量解锁、或用户手动从 UI 解锁单个号。
+func (s *PoolKeyState) clearExhausted() {
+	if !s.RuntimeExhausted {
+		return
+	}
+	s.RuntimeExhausted = false
+	s.CooldownUntil = time.Time{}
+	s.ConsecutiveErrs = 0
+	if !s.Disabled {
+		s.Healthy = true
+	}
+}
+
 func (s *PoolKeyState) recordSuccess() {
 	s.RequestCount++
 	s.SuccessCount++
@@ -270,6 +287,12 @@ type MitmProxy struct {
 	jwtOnce  sync.Once
 	stopCh   chan struct{}
 
+	// bgWg 跟踪 fire-and-forget 后台 goroutine（如认证失败后的 JWT 异步刷新）。
+	// Stop() 不强等（HTTP refresh 自带 30s timeout，等不值），但测试可调
+	// WaitBackgroundForTests() 确保 goroutine 收尾后再断言，避免 race detector
+	// 报 "Test/goroutine teardown" 误警。
+	bgWg sync.WaitGroup
+
 	lastErrorKind    string
 	lastErrorSummary string
 	lastErrorAt      string
@@ -286,6 +309,14 @@ type MitmProxy struct {
 	// F7-REMOVAL: 本行字段删除。同步去掉 SetSmartFriendEnabled / GetSmartFriendEnabled
 	// (定义在 proxy_smartfriend.go) 以及下面 markRuntimeExhaustedAndRotate / handleRequest 两处分支。
 	smartFriendEnabled bool // F7 patch: CASCADE(5) → SMART_FRIEND(13)
+
+	// autoSwitchOnQuotaExhausted 镜像 settings.AutoSwitchOnQuotaExhausted。
+	// 关闭时 MITM 收到上游 quota_exhausted 错误：
+	//   - 不调用 markExhausted（不锁号、不进冷却、不打 RuntimeExhausted 标志）
+	//   - 不调用 rotateKey（保持当前 key）
+	//   - 错误透传给 IDE，由 IDE 自行处理（弹 quota 提示）
+	// 默认 true（保持现有行为）。app_settings.syncAutoSwitchOnQuotaExhausted 同步。
+	autoSwitchOnQuotaExhausted bool
 
 	usageTracker *UsageTracker
 
@@ -308,6 +339,14 @@ type MitmProxy struct {
 	// 上一次因 rate limit 触发轮转的时间；短时间内并发命中限速只切一次号，
 	// 避免连锁烧 key。受 mu 保护。
 	lastRateLimitRotateAt time.Time
+
+	// ── ManualPin 粘性 ──
+	// 当用户手动切到某账号 + 启用 ManualPin 时，App 层把该账号的 apiKey 推到
+	// 这里。pickKeyForNewConversation / pickPoolKeyForSession 优先用此 key，
+	// 而不是 leastConnectionsKey 的负载均衡分配。空字符串 = 关闭粘性。
+	// 设计动机：用户「手动切到 X = 接下来的新对话也用 X」是明确意图，
+	// 旧实现按 leastConnections 把新对话分散给"会话最少的"号，与意图冲突。
+	stickyKey string
 
 	// ── Clash IP 轮换钩子 ──
 	// inFlightChatStreams: 当前进行中的 chat-path 请求数（atomic），
@@ -450,16 +489,17 @@ type quotaStreamWatchBody struct {
 // NewMitmProxy creates a new proxy instance.
 func NewMitmProxy(windsurfSvc *WindsurfService, logFn func(string), proxyURL string, usageTracker *UsageTracker) *MitmProxy {
 	return &MitmProxy{
-		port:         defaultProxyPort,
-		keyStates:    make(map[string]*PoolKeyState),
-		windsurfSvc:  windsurfSvc,
-		logFn:        logFn,
-		proxyURL:     proxyURL,
-		jwtReady:     make(chan struct{}),
-		jwtFetches:   make(map[string]*jwtFetchCall),
-		stopCh:       make(chan struct{}),
-		sessionMap:   make(map[string]*SessionBinding),
-		usageTracker: usageTracker,
+		port:                       defaultProxyPort,
+		keyStates:                  make(map[string]*PoolKeyState),
+		windsurfSvc:                windsurfSvc,
+		logFn:                      logFn,
+		proxyURL:                   proxyURL,
+		jwtReady:                   make(chan struct{}),
+		jwtFetches:                 make(map[string]*jwtFetchCall),
+		stopCh:                     make(chan struct{}),
+		sessionMap:                 make(map[string]*SessionBinding),
+		usageTracker:               usageTracker,
+		autoSwitchOnQuotaExhausted: true, // 默认开启，保持现有行为
 	}
 }
 
@@ -506,6 +546,44 @@ func (p *MitmProxy) SetOnUpstreamRateLimit(fn func(detail string)) {
 	p.mu.Unlock()
 }
 
+// SetStickyKey 设置 ManualPin 粘性 key —— 启用后所有新对话强制走该 key，
+// 不再按 leastConnections 在号池间分散。空字符串清除粘性。
+//
+// 由 App 层 setManualPin / UnpinManualAccount / 启动时根据 settings 推送。
+// 与 SwitchToKey 分工：
+//   - SwitchToKey 改 currentIdx（影响"当前活跃"显示 + auto-rotate 起点）
+//   - SetStickyKey 改 stickyKey（影响新对话路由 → 不会被 leastConnections 分散）
+func (p *MitmProxy) SetStickyKey(apiKey string) {
+	p.mu.Lock()
+	p.stickyKey = strings.TrimSpace(apiKey)
+	p.mu.Unlock()
+	if p.stickyKey != "" {
+		p.log("ManualPin 粘性已启用: 新对话强制走 %s...", p.stickyKey[:minStr(12, len(p.stickyKey))])
+	} else {
+		p.log("ManualPin 粘性已清除: 新对话恢复 leastConnections 分散")
+	}
+}
+
+// pickStickyKey 内部使用：如果启用了 stickyKey 且该 key 健康可用，返回 (key, jwt)。
+// 不可用（额度耗尽/无 JWT/不在号池）则返回 ("", nil)，调用方继续 fallback 流程。
+//
+// Caller 不持有 p.mu / p.sessionsMu / p.pendingNewConvMu。
+func (p *MitmProxy) pickStickyKey() (string, []byte) {
+	p.mu.RLock()
+	sticky := p.stickyKey
+	state := p.keyStates[sticky]
+	available := sticky != "" && state != nil && state.isAvailable()
+	p.mu.RUnlock()
+	if sticky == "" || !available {
+		return "", nil
+	}
+	jwt := p.usableJWTForKey(sticky)
+	if len(jwt) == 0 {
+		return "", nil
+	}
+	return sticky, jwt
+}
+
 // InFlightChatStreams 返回当前进行中的 chat-path 请求数（用于 Clash 切换前空闲判定）。
 func (p *MitmProxy) InFlightChatStreams() int64 {
 	return atomic.LoadInt64(&p.inFlightChatStreams)
@@ -531,6 +609,15 @@ func (p *MitmProxy) markRuntimeExhaustedAndRotate(usedKey, detail string) string
 		p.mu.Unlock()
 		p.recordUpstreamFailure(upstreamFailureQuota, "smartfriend-bypass="+detail, usedKey)
 		p.log("★ SmartFriend 已开启，忽略额度耗尽判定: %s...", usedKey[:minStr(12, len(usedKey))])
+		return ""
+	}
+	// ★ 用户在 Settings「额度耗尽时自动切下一席」关闭：不锁号、不切号、不打 RuntimeExhausted。
+	//    错误依旧透传给 IDE 处理（IDE 会显示 quota exceeded）。
+	//    仅记录失败计数用于统计 / 通知中心。
+	if !p.autoSwitchOnQuotaExhausted {
+		p.mu.Unlock()
+		p.recordUpstreamFailure(upstreamFailureQuota, "auto-switch-off="+detail, usedKey)
+		p.log("★ 自动切下一席已关闭，忽略额度耗尽锁定: %s... (透传给IDE)", usedKey[:minStr(12, len(usedKey))])
 		return ""
 	}
 	if state := p.keyStates[usedKey]; state != nil {
@@ -569,16 +656,47 @@ func (p *MitmProxy) rotateAfterAuthFailure(usedKey, detail string) string {
 
 	p.log("★ 认证失败(不切号): %s...，后台异步刷新 JWT", usedKey[:minStr(12, len(usedKey))])
 	if usedKey != "" && p.windsurfSvc != nil && p.windsurfSvc.client != nil {
-		go func(key string) {
+		// 启动前快速检测 proxy 是否已 Stop —— 测试 / shutdown 时不再发起新刷新。
+		p.mu.RLock()
+		stopCh := p.stopCh
+		p.mu.RUnlock()
+		select {
+		case <-stopCh:
+			return "" // 已停，不启动
+		default:
+		}
+		p.bgWg.Add(1)
+		go func(key string, sc chan struct{}) {
+			defer p.bgWg.Done()
+			// goroutine 启动期间可能被 Stop —— 再 check 一次。
+			select {
+			case <-sc:
+				return
+			default:
+			}
 			refreshed := p.refreshJWTForKey(key)
+			// HTTP 完成后可能 proxy 已 Stop。日志路径仍是 thread-safe 的，
+			// 但 stopped 后日志泄漏到下次启动会混淆，跳过更干净。
+			select {
+			case <-sc:
+				return
+			default:
+			}
 			if len(refreshed) > 0 {
 				p.log("认证失败后后台刷新 JWT 成功: %s...", key[:minStr(12, len(key))])
 			} else {
 				p.log("认证失败后后台刷新 JWT 失败: %s...", key[:minStr(12, len(key))])
 			}
-		}(usedKey)
+		}(usedKey, stopCh)
 	}
 	return "" // 不切号
+}
+
+// WaitBackgroundForTests 阻塞等待所有 fire-and-forget 后台 goroutine 退出。
+// 仅供测试使用 —— 生产 Stop 路径不调用，因为 HTTP refresh 自带 30s timeout
+// 等不值。Test cleanup 用此函数避免 -race 误报。
+func (p *MitmProxy) WaitBackgroundForTests() {
+	p.bgWg.Wait()
 }
 
 func (p *MitmProxy) disableKeyAndRotate(usedKey, detail string) string {
@@ -808,6 +926,81 @@ func (p *MitmProxy) SetOutboundProxy(proxyURL string) {
 	p.proxyURL = strings.TrimSpace(proxyURL)
 }
 
+// SetAutoSwitchOnQuotaExhausted 同步用户「额度耗尽时自动切下一席」开关到 MITM proxy。
+// 关闭后：MITM 收到上游 quota_exhausted 不再锁号 / 切号，直接透传错误给 IDE。
+//
+// ★ 副作用：开关从开 → 关时，自动批量解锁所有已 RuntimeExhausted 的号。
+// 用户预期一关开关就立刻见效，不必再点「批量解锁」按钮。
+func (p *MitmProxy) SetAutoSwitchOnQuotaExhausted(enabled bool) {
+	p.mu.Lock()
+	prev := p.autoSwitchOnQuotaExhausted
+	p.autoSwitchOnQuotaExhausted = enabled
+	autoUnlock := prev && !enabled
+	cleared := 0
+	if autoUnlock {
+		for key, state := range p.keyStates {
+			if state == nil || !state.RuntimeExhausted {
+				continue
+			}
+			state.clearExhausted()
+			cleared++
+			p.log("★ 自动解锁(开关关闭): %s...", key[:minStr(12, len(key))])
+		}
+	}
+	p.mu.Unlock()
+	if cleared > 0 {
+		p.log("★ SetAutoSwitchOnQuotaExhausted=false → 自动解锁 %d 个号", cleared)
+	}
+}
+
+// GetAutoSwitchOnQuotaExhausted 返回当前 MITM「额度耗尽自动切」开关状态。
+func (p *MitmProxy) GetAutoSwitchOnQuotaExhausted() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.autoSwitchOnQuotaExhausted
+}
+
+// ClearKeyExhausted 解除单个 key 的「额度耗尽」锁定（手动解锁入口）。
+// 返回是否真正解锁了某个号。
+func (p *MitmProxy) ClearKeyExhausted(apiKey string) bool {
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	state, ok := p.keyStates[apiKey]
+	if !ok || state == nil {
+		return false
+	}
+	if !state.RuntimeExhausted {
+		return false
+	}
+	state.clearExhausted()
+	p.log("★ 手动解锁额度耗尽: %s...", apiKey[:minStr(12, len(apiKey))])
+	return true
+}
+
+// ClearAllExhausted 批量解除号池中所有 RuntimeExhausted 锁定。
+// 返回解锁的号数量。
+func (p *MitmProxy) ClearAllExhausted() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	cleared := 0
+	for key, state := range p.keyStates {
+		if state == nil || !state.RuntimeExhausted {
+			continue
+		}
+		state.clearExhausted()
+		cleared++
+		p.log("★ 批量解锁: %s...", key[:minStr(12, len(key))])
+	}
+	if cleared > 0 {
+		p.log("★ ClearAllExhausted: 共解锁 %d 个号", cleared)
+	}
+	return cleared
+}
+
 // SetDebugDump 开启/关闭 proto dump（GetChatMessage 请求/响应字段树写入文件）
 func (p *MitmProxy) SetDebugDump(enabled bool) {
 	p.mu.Lock()
@@ -1019,8 +1212,12 @@ func (p *MitmProxy) Start() error {
 	}
 
 	// 2. Setup TLS listener
+	// ★ D-1: NextProtos 告诉客户端 ALPN 支持 h2 + http/1.1 fallback。
+	//   旧实现只设 Certificates → IDE↔MITM 这段降级到 HTTP/1.1，多个并发请求
+	//   被拖到 6 连接限制，每个连接独立 TLS 握手 → 首字慢 + 多 tab 卡。
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{*hostCert},
+		NextProtos:   []string{"h2", "http/1.1"},
 	}
 
 	addr := fmt.Sprintf("127.0.0.1:%d", p.port)
@@ -1034,6 +1231,9 @@ func (p *MitmProxy) Start() error {
 	p.running = true
 	p.stopCh = make(chan struct{})
 	p.mu.Unlock()
+
+	// P2: 启用 trafficLog 后台批量刷盘，避免每条 fsync 拖累 chat TTFB
+	EnableTrafficLogAsync()
 
 	p.log("代理已启动: %s", addr)
 
@@ -1198,12 +1398,17 @@ func (p *MitmProxy) CurrentAPIKey() string {
 }
 
 // buildUpstreamTransport 构建出站 Transport，支持通过用户本地代理 (如 Clash) 访问上游
+//
+// ★ D-3: 显式启用 http2 + ping。旧实现仅 ForceAttemptHTTP2=true，没有 ping
+// 健康检查 → 上游间歇性 RST_STREAM / 静默断连时，死连接被复用，单次请求
+// 必须等到 ResponseHeaderTimeout 才报错或重传。ReadIdleTimeout 让连接 30s
+// 无数据时主动 PING，PingTimeout 15s 内不响应即关闭重建。
 func (p *MitmProxy) buildUpstreamTransport() *http.Transport {
 	t := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
 			ServerName:         UpstreamHost,
-			NextProtos:         []string{"h2", "http/1.1"},
+			NextProtos:         []string{"h2"}, // ★ D-3: Windsurf 强制 h2，去掉 http/1.1 fallback
 		},
 		ForceAttemptHTTP2:     true,
 		DisableCompression:    true,
@@ -1218,6 +1423,14 @@ func (p *MitmProxy) buildUpstreamTransport() *http.Transport {
 			t.Proxy = http.ProxyURL(u)
 			p.log("出站代理: %s", p.proxyURL)
 		}
+	}
+	// ★ D-3: ConfigureTransports（s 复数）返回 *http2.Transport 暴露 ping 字段，
+	//   老版 ConfigureTransport 不暴露能力受限。
+	if h2t, err := http2.ConfigureTransports(t); err == nil {
+		h2t.ReadIdleTimeout = 30 * time.Second
+		h2t.PingTimeout = 15 * time.Second
+	} else {
+		p.log("http2.ConfigureTransports 失败: %v (回退 ForceAttemptHTTP2)", err)
 	}
 	return t
 }
@@ -1251,9 +1464,29 @@ func isGlobalRateLimitText(text string) bool {
 
 func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// 保存原始 body 以便重试时重放
+	// ★ D-2: 优先用 req.GetBody（handleRequest 已处理过身份替换并通过
+	//   setReqBody 设置 GetBody），避免对同一份 body 第二次 ReadAll +
+	//   cloneBytes —— 长对话场景内存峰值 3× → 1×。
+	//   GetBody 模式下 retryBody=savedBody（重试也调 GetBody 不需 clone）。
+	//   非 GetBody 兼容路径（外部直接调 RoundTrip 不经过 handleRequest）保留旧行为。
 	var savedBody []byte
 	var retryBody []byte
-	if req.Body != nil {
+	usedGetBody := false
+	if req.GetBody != nil {
+		rc, err := req.GetBody()
+		if err != nil {
+			return nil, err
+		}
+		savedBody, err = io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			return nil, err
+		}
+		retryBody = savedBody
+		usedGetBody = true
+		req.Body = io.NopCloser(bytes.NewReader(savedBody))
+		req.ContentLength = int64(len(savedBody))
+	} else if req.Body != nil {
 		var err error
 		savedBody, err = io.ReadAll(req.Body)
 		req.Body.Close()
@@ -1263,7 +1496,9 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		retryBody = cloneBytes(savedBody)
 		req.Body = io.NopCloser(bytes.NewReader(savedBody))
 		req.ContentLength = int64(len(savedBody))
+	}
 
+	if savedBody != nil {
 		if strings.Contains(req.URL.Path, "GetChatMessage") || strings.Contains(req.URL.Path, "GetCompletions") {
 			model, pt := ExtractMitmMetadata(savedBody)
 			if model != "" {
@@ -1271,6 +1506,19 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 			req.Header.Set("X-Mitm-Prompt-Tokens", fmt.Sprintf("%d", pt))
 			req.Header.Set("X-Mitm-Start-Time", fmt.Sprintf("%d", time.Now().UnixMilli()))
+		}
+	}
+	_ = usedGetBody // 未来可用作日志/metric
+
+	// ★ D-2: 重试路径中同步更新 req.Body / ContentLength / GetBody。
+	//   后续 retry 点修改 retryBody 后，http2.Transport 可能在连接断开
+	//   场景调 GetBody 重拿 body；不同步更新会拿到旧 currentBody。
+	setRetryBody := func(b []byte) {
+		retryBody = b
+		req.Body = io.NopCloser(bytes.NewReader(b))
+		req.ContentLength = int64(len(b))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(b)), nil
 		}
 	}
 
@@ -1308,31 +1556,62 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 
 		if !canBuffer {
-			// ★ 对 CL=-1 的 connect+proto 响应，peek 前 8KB 检测小错误包(rate limit 等)
-			// Rate limit 错误通常 <1KB，"Your request was not processed" 意味着无数据帧
-			const peekLimit = 8192
+			// ★ 性能关键：CL=-1 的 connect+proto 响应只 peek **5 字节** Connect 帧头
+			//
+			// 旧实现 peek 前 8KB(io.ReadFull) 会强制等上游凑齐 8193 字节才把响应交给
+			// IDE —— 这是「直连秒开、MITM 拖几秒首字」的根因。流式 chat 的首批
+			// data frame 通常每个几十~几百字节，累积 8KB 取决于上游发包节奏，实测可
+			// 多出 100-1500ms 的首字延迟。
+			//
+			// 新策略：只读首帧 5 字节头(flag + 4字节 BE payloadLen)：
+			//   - flag&0x02 != 0 且 payloadLen 合理(<=4KB) → EOS-only 错误帧 →
+			//     缓冲走错误分类(rate limit / quota 检测仍生效)
+			//   - 其余(普通 data 帧 / 非法长度) → MultiReader 还原首 5B，立即
+			//     return，零首字延迟
+			//
+			// 错误检测能力不丢：rate limit / quota 错误响应都是 EOS-only 单帧，
+			// 仍然走缓冲分支。普通流式 data 帧的错误已经由下游 ConnectStreamWatcher
+			// 在 stream 末尾(EOS trailer)兜底检测。
 			if resp.StatusCode == 200 && resp.ContentLength < 0 {
-				peekBuf := make([]byte, peekLimit+1)
-				n, peekErr := io.ReadFull(resp.Body, peekBuf)
-				if n <= peekLimit {
-					// 整个响应 <= 8KB，可以缓冲走重试路径
+				const headLen = 5
+				const eosPayloadCap = 4096 // EOS 错误帧通常 <1KB，4KB 是宽松上限
+				head := make([]byte, headLen)
+				n, peekErr := io.ReadFull(resp.Body, head)
+				if n < headLen {
+					// 上游 EOF 在 5 字节内 —— 异常小响应，全缓冲走错误检测
 					resp.Body.Close()
-					respBody := peekBuf[:n]
-					resp.Body = io.NopCloser(bytes.NewReader(respBody))
+					resp.Body = io.NopCloser(bytes.NewReader(head[:n]))
 					resp.ContentLength = int64(n)
 					canBuffer = true
 					// fall through to error detection below
 				} else {
-					// 大于 8KB，是真正的流式数据，还原 body
-					resp.Body = struct {
-						io.Reader
-						io.Closer
-					}{
-						Reader: io.MultiReader(bytes.NewReader(peekBuf[:n]), resp.Body),
-						Closer: resp.Body,
+					flag := head[0]
+					payloadLen := int(binary.BigEndian.Uint32(head[1:5]))
+					isEOS := flag&0x02 != 0
+					if isEOS && payloadLen >= 0 && payloadLen <= eosPayloadCap {
+						// EOS-only 错误帧：读完整帧后走缓冲错误分类
+						rest := make([]byte, payloadLen)
+						m, _ := io.ReadFull(resp.Body, rest)
+						resp.Body.Close()
+						full := make([]byte, 0, headLen+m)
+						full = append(full, head...)
+						full = append(full, rest[:m]...)
+						resp.Body = io.NopCloser(bytes.NewReader(full))
+						resp.ContentLength = int64(len(full))
+						canBuffer = true
+						// fall through to error detection below
+					} else {
+						// 普通 data 帧 / 非法长度：立即 passthrough，零首字延迟
+						resp.Body = struct {
+							io.Reader
+							io.Closer
+						}{
+							Reader: io.MultiReader(bytes.NewReader(head), resp.Body),
+							Closer: resp.Body,
+						}
+						_ = peekErr
+						return resp, nil
 					}
-					_ = peekErr
-					return resp, nil
 				}
 			} else {
 				return resp, nil
@@ -1402,8 +1681,7 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			rt.proxy.recordUpstreamFailure(kind, detail, usedKey)
 			rt.proxy.log("★ 上游不可达，同 key 重试(%d/%d): %s... path=%s",
 				attempt+1, rt.maxRetry, usedKey[:minStr(12, len(usedKey))], req.URL.Path)
-			req.Body = io.NopCloser(bytes.NewReader(retryBody))
-			req.ContentLength = int64(len(retryBody))
+			setRetryBody(retryBody)
 			continue
 		}
 
@@ -1449,12 +1727,9 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 					rt.proxy.mu.RUnlock()
 					newBody, replaced := ReplaceIdentityInBody(retryBody, []byte(usedKey), refreshedJWT, false, authFP)
 					if replaced {
-						retryBody = newBody
-						req.Body = io.NopCloser(bytes.NewReader(newBody))
-						req.ContentLength = int64(len(newBody))
+						setRetryBody(newBody)
 					} else {
-						req.Body = io.NopCloser(bytes.NewReader(retryBody))
-						req.ContentLength = int64(len(retryBody))
+						setRetryBody(retryBody)
 					}
 					req.Header.Set("Authorization", "Bearer "+string(refreshedJWT))
 					req.Header.Set("X-Pool-Key-Used", usedKey)
@@ -1513,12 +1788,9 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		rt.proxy.mu.RUnlock()
 		newBody, replaced := ReplaceIdentityInBody(retryBody, []byte(newKey), newJWT, retryRandFP, retryFP)
 		if replaced {
-			retryBody = newBody
-			req.Body = io.NopCloser(bytes.NewReader(newBody))
-			req.ContentLength = int64(len(newBody))
+			setRetryBody(newBody)
 		} else {
-			req.Body = io.NopCloser(bytes.NewReader(retryBody))
-			req.ContentLength = int64(len(retryBody))
+			setRetryBody(retryBody)
 		}
 		req.Header.Set("Authorization", "Bearer "+string(newJWT))
 		req.Header.Set("X-Pool-Key-Used", newKey)
@@ -1589,7 +1861,17 @@ func (p *MitmProxy) serve() {
 		proxy.ServeHTTP(w, r)
 	})
 	server := &http.Server{
-		Handler: handler,
+		Handler:           handler,
+		ReadHeaderTimeout: 30 * time.Second,
+	}
+	// ★ D-1: 显式注册 h2 handler。Go 的 http.Server 自动 h2 仅在 ListenAndServeTLS
+	//   路径下触发；这里走 tls.Listen + Serve 必须手动调用，否则即使 ALPN 协商
+	//   到 h2，server 也不会处理 h2 帧 → 客户端协议错乱。
+	if err := http2.ConfigureServer(server, &http2.Server{
+		IdleTimeout:          120 * time.Second,
+		MaxConcurrentStreams: 250,
+	}); err != nil {
+		p.log("http2.ConfigureServer 失败: %v (回退到 HTTP/1.1)", err)
 	}
 
 	if err := server.Serve(p.listener); err != nil {
@@ -1606,6 +1888,18 @@ func (p *MitmProxy) handleRequest(req *http.Request, origHost string) {
 	// 使用传入的原始域名设置 Host 头（可能是 server.self-serve.windsurf.com 或 server.codeium.com）
 	req.Host = origHost
 	req.Header.Set("Host", origHost)
+
+	// ★ D-2: setReqBody 同时设置 Body / ContentLength / GetBody。
+	// 设置 GetBody 后 retryTransport 重试可调 GetBody 重拿可重放的 ReadCloser，
+	// 不再需要对 body 做第二次 ReadAll + cloneBytes —— 长对话 body
+	// 内存峰值从 3× 降到 1×。
+	setReqBody := func(b []byte) {
+		req.Body = io.NopCloser(bytes.NewReader(b))
+		req.ContentLength = int64(len(b))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(b)), nil
+		}
+	}
 
 	// ★ 全量抓包：请求
 	p.captureRequest(req)
@@ -1660,7 +1954,7 @@ func (p *MitmProxy) handleRequest(req *http.Request, origHost string) {
 	bodyBytes, err := io.ReadAll(req.Body)
 	req.Body.Close()
 	if err != nil || len(bodyBytes) == 0 {
-		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		setReqBody(bodyBytes)
 		return
 	}
 
@@ -1700,7 +1994,7 @@ func (p *MitmProxy) handleRequest(req *http.Request, origHost string) {
 			p.log("session路由(新对话): path=%s [%s]", pathTail, convDbg)
 		} else {
 			// Cortex/Trajectory 请求但无 conv_id → 透传
-			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			setReqBody(bodyBytes)
 			return
 		}
 	} else {
@@ -1733,66 +2027,65 @@ func (p *MitmProxy) handleRequest(req *http.Request, origHost string) {
 		} else {
 			p.log("跳过身份替换: %s (JWT 未就绪)", pathTail)
 		}
-		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		setReqBody(bodyBytes)
 		return
 	}
 
-	// Replace identity in protobuf body
-	// ★ 每个 key 用独立的 session ID 和设备指纹（防 session 级限速）
+	// P4: 一次 RLock 取出本请求需要的所有 mu 保护字段，减少锁切换。
+	// 旧实现 3 次连续 RLock/RUnlock + 1 次 DebugDumpEnabled() 内 RLock，热路径
+	// 锁开销可观；snapshot 后所有判断都基于不可变副本。
 	p.mu.RLock()
 	randFP := p.isTrialOrFreeKey(poolKey)
 	fp := p.keyFingerprint(poolKey)
+	jb := p.jailbreakConfig
+	sfEnabled := p.smartFriendEnabled
+	debugDumpEnabled := p.debugDump
 	p.mu.RUnlock()
+
+	// Replace identity in protobuf body
+	// ★ 每个 key 用独立的 session ID 和设备指纹（防 session 级限速）
 	newBody, replaced := ReplaceIdentityInBody(bodyBytes, []byte(poolKey), poolJWT, randFP, fp)
+	// ★ D-2: currentBody 跟踪当前身份、破限、F7 patch 连环后的最终 body。
+	//   避免后续段从 req.Body 反读 (旧实现 SmartFriend 那段 io.ReadAll)。
+	currentBody := bodyBytes
 	if replaced {
-		req.Body = io.NopCloser(bytes.NewReader(newBody))
-		req.ContentLength = int64(len(newBody))
+		currentBody = newBody
 		sid := ""
 		if fp != nil {
 			sid = fp.SessionID[:minStr(8, len(fp.SessionID))]
 		}
 		p.log("身份替换: %s key=%s...%s sid=%s fp=%v", pathTail, poolKey[:minStr(12, len(poolKey))], suffix3(poolKey), sid, randFP)
-	} else {
-		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		newBody = bodyBytes
 	}
+	setReqBody(currentBody)
 
 	// ★ 破限注入：仅 chat 路径(GetChatMessage / GetCompletions)，向 F2 system
 	// prompt 末尾追加 override 文本。Cortex / Trajectory 不带 system prompt，
 	// 跳过避免破坏其它消息。
-	p.mu.RLock()
-	jb := p.jailbreakConfig
-	p.mu.RUnlock()
 	if jb.Enabled && jb.Override != "" && isChatPath(path) {
-		if injected, ok := InjectSystemPromptOverride(newBody, jb.Override); ok {
-			req.Body = io.NopCloser(bytes.NewReader(injected))
-			req.ContentLength = int64(len(injected))
+		if injected, ok := InjectSystemPromptOverride(currentBody, jb.Override); ok {
 			p.jailbreakStats.record()
 			p.log("破限注入: %s (+%dB to system prompt, total=%d today=%d)",
-				pathTail, len(injected)-len(newBody),
+				pathTail, len(injected)-len(currentBody),
 				p.jailbreakStats.totalInjects.Load(),
 				p.jailbreakStats.snapshot().TodayInjects)
+			currentBody = injected
+			setReqBody(currentBody)
 		}
 	}
 
 	// F7-REMOVAL: 下面整个 if sfEnabled && isChatPath(path) 块删除
 	// ★ SmartFriend F7 patch: CASCADE(5) → SMART_FRIEND(13)
-	p.mu.RLock()
-	sfEnabled := p.smartFriendEnabled
-	p.mu.RUnlock()
+	// ★ D-2: 旧实现这里又 io.ReadAll(req.Body) 拿 currentBody，复用上面本地变量免到。
 	if sfEnabled && isChatPath(path) {
-		curBody, _ := io.ReadAll(req.Body)
-		if patched, ok := PatchF7ToSmartFriend(curBody); ok {
-			req.Body = io.NopCloser(bytes.NewReader(patched))
-			req.ContentLength = int64(len(patched))
-			p.log("SmartFriend F7 patch: %s (+%dB)", pathTail, len(patched)-len(curBody))
-		} else {
-			req.Body = io.NopCloser(bytes.NewReader(curBody))
+		if patched, ok := PatchF7ToSmartFriend(currentBody); ok {
+			p.log("SmartFriend F7 patch: %s (+%dB)", pathTail, len(patched)-len(currentBody))
+			currentBody = patched
+			setReqBody(currentBody)
 		}
 	}
 
 	// Debug dump: GetChatMessage 请求
-	if p.DebugDumpEnabled() && strings.Contains(path, "GetChatMessage") {
+	if debugDumpEnabled && strings.Contains(path, "GetChatMessage") {
 		if dumpPath, err := WriteProtoDump("req_"+pathTail, bodyBytes); err == nil {
 			p.log("📝 dump 请求: %s", dumpPath)
 		}
@@ -1845,8 +2138,19 @@ func (p *MitmProxy) recordMitmUsage(req *http.Request, usedKey string, completio
 }
 
 func (p *MitmProxy) handleResponse(resp *http.Response) {
-	// ★ 全量抓包：响应
-	p.captureResponse(resp)
+	// ★ D-4: 一次 RLock 拿出本响应路径需要的所有 snapshot，热路径减少锁切换。
+	// 旧实现：FullCaptureEnabled() / DebugDumpEnabled() / forgeConfig 各
+	// 独立 RLock，高 QPS 下 reader 队列累积竞争。
+	p.mu.RLock()
+	fullCapture := p.fullCapture
+	debugDumpEnabled := p.debugDump
+	forgeCfg := p.forgeConfig
+	p.mu.RUnlock()
+
+	// ★ 全量抓包：响应（仅启用时才进入，省掉 captureResponse 内部一次 RLock）
+	if fullCapture {
+		p.captureResponse(resp)
+	}
 
 	path := resp.Request.URL.Path
 	pathTail := path
@@ -1864,9 +2168,7 @@ func (p *MitmProxy) handleResponse(resp *http.Response) {
 		bodySnap, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err == nil && len(bodySnap) > 0 {
-			trafficLogMu.Lock()
-			seq := trafficSeq
-			trafficLogMu.Unlock()
+			seq := int(trafficSeq.Load())
 			dumpPath := TrafficDumpBody(seq, sanitizePathForFile(pathTail), bodySnap)
 			trafficLog("  DUMP %s (%d bytes) → %s", pathTail, len(bodySnap), dumpPath)
 		}
@@ -1959,7 +2261,7 @@ func (p *MitmProxy) handleResponse(resp *http.Response) {
 					p.log("上游%s错误(buffered): %s key=%s...", kind.logLabel(), truncate(detail, 100), usedKey[:minStr(12, len(usedKey))])
 				}
 
-				if p.DebugDumpEnabled() && strings.Contains(path, "GetChatMessage") {
+				if debugDumpEnabled && strings.Contains(path, "GetChatMessage") {
 					if dumpPath, err := WriteProtoDump("resp_small_"+pathTail, bodyBytes); err == nil {
 						p.log("📝 dump 响应(buffered): %s", dumpPath)
 					}
@@ -1973,7 +2275,7 @@ func (p *MitmProxy) handleResponse(resp *http.Response) {
 		} else if shouldWatchStream {
 			// ★ 流式响应: 用 ConnectStreamWatcher 检测 EOS trailer 帧中的错误
 			var dumpBody io.ReadCloser
-			if p.DebugDumpEnabled() && strings.Contains(path, "GetChatMessage") {
+			if debugDumpEnabled && strings.Contains(path, "GetChatMessage") {
 				dumpBody = newDumpTeeBody(resp.Body, "resp_stream_"+pathTail, p)
 			}
 			baseBody := resp.Body
@@ -2048,9 +2350,7 @@ func (p *MitmProxy) handleResponse(resp *http.Response) {
 	}
 
 	// Forge GetUserStatus / GetPlanStatus responses
-	p.mu.RLock()
-	forgeCfg := p.forgeConfig
-	p.mu.RUnlock()
+	// ★ D-4: forgeCfg 已在函数入口 snapshot、复用
 	if forgeCfg.Enabled && resp.StatusCode == 200 && resp.Body != nil {
 		isUserStatus := strings.Contains(path, "GetUserStatus")
 		isPlanStatus := strings.Contains(path, "GetPlanStatus")
@@ -2386,7 +2686,23 @@ func (p *MitmProxy) leastConnectionsKey(excludeKey string) string {
 // pickKeyForNewConversation 为首条消息（无 convID）选择 pool key。
 // 使用 leastConnectionsKeyWithPending 在号池间均匀分配新对话，并将选用的 key 推入
 // pendingNewConvKeys 队列，以便第二条消息（带 convID）能绑定到同一个 key。
+//
+// ★ ManualPin 例外：如果设置了 stickyKey 且健康可用，直接返回 sticky 而不走
+// 负载均衡。语义：用户「手动切到 X」= 接下来的新对话也用 X，是明确意图。
 func (p *MitmProxy) pickKeyForNewConversation() (string, []byte) {
+	// ★ ManualPin: 用户明确意图优先级最高
+	if stickyKey, stickyJWT := p.pickStickyKey(); stickyKey != "" {
+		// 也推入 pending，让第二条消息（带 convID）能匹配回同一个 key
+		p.pendingNewConvMu.Lock()
+		p.pendingNewConvKeys = append(p.pendingNewConvKeys, pendingKeyEntry{PoolKey: stickyKey, At: time.Now()})
+		if len(p.pendingNewConvKeys) > pendingNewConvMaxSize {
+			p.pendingNewConvKeys = p.pendingNewConvKeys[len(p.pendingNewConvKeys)-pendingNewConvMaxSize:]
+		}
+		p.pendingNewConvMu.Unlock()
+		p.log("新对话分配(sticky/ManualPin): key=%s...", stickyKey[:minStr(12, len(stickyKey))])
+		return stickyKey, stickyJWT
+	}
+
 	// ★ 持有 pendingNewConvMu 全程：确保 "统计 pending → 选 key → push pending" 原子化，
 	// 防止两个并发新对话都看到 pending=0 而选到同一个 key。
 	p.pendingNewConvMu.Lock()
@@ -2589,7 +2905,18 @@ func (p *MitmProxy) pickPoolKeyForSession(convID string, excludeKeys ...string) 
 		}
 	}
 
-	// Fallback: least-connections（迁移场景或 pending 无匹配时）
+	// ★ ManualPin sticky 优先于 leastConnections fallback
+	// 场景：第二条消息带 convID 但 pending 已过期 / 被排空 / IDE 重启后第一次消息
+	// 直接带了 convID。这时仍应让 sticky 起作用，而不是被 leastConnections 抢走。
+	if newKey == "" {
+		if stickyKey, _ := p.pickStickyKey(); stickyKey != "" && stickyKey != excludeKey {
+			newKey = stickyKey
+			p.log("新会话绑定(sticky/ManualPin): conv=%s... → key=%s...",
+				convID[:minStr(8, len(convID))], stickyKey[:minStr(12, len(stickyKey))])
+		}
+	}
+
+	// Fallback: least-connections（迁移场景或 pending/sticky 都无匹配时）
 	if newKey == "" {
 		p.mu.RLock()
 		newKey = p.leastConnectionsKey(excludeKey)

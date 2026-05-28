@@ -1,6 +1,8 @@
 package services
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -18,32 +20,32 @@ import (
 
 // UsageRecord 单次请求的用量记录
 type UsageRecord struct {
-	ID               string  `json:"id"`
-	At               string  `json:"at"`                // RFC3339
-	Model            string  `json:"model"`
-	RequestModel     string  `json:"request_model"`     // 用户请求的原始模型名
-	PromptTokens     int     `json:"prompt_tokens"`
-	CompletionTokens int     `json:"completion_tokens"`
-	TotalTokens      int     `json:"total_tokens"`
-	DurationMs       int64   `json:"duration_ms"`
-	APIKeyShort      string  `json:"api_key_short"`
-	Status           string  `json:"status"` // "ok" / "error"
-	ErrorDetail      string  `json:"error_detail,omitempty"`
-	Format           string  `json:"format"` // "openai" / "anthropic"
+	ID               string `json:"id"`
+	At               string `json:"at"` // RFC3339
+	Model            string `json:"model"`
+	RequestModel     string `json:"request_model"` // 用户请求的原始模型名
+	PromptTokens     int    `json:"prompt_tokens"`
+	CompletionTokens int    `json:"completion_tokens"`
+	TotalTokens      int    `json:"total_tokens"`
+	DurationMs       int64  `json:"duration_ms"`
+	APIKeyShort      string `json:"api_key_short"`
+	Status           string `json:"status"` // "ok" / "error"
+	ErrorDetail      string `json:"error_detail,omitempty"`
+	Format           string `json:"format"` // "openai" / "anthropic"
 }
 
 // UsageSummary 用量汇总（按天/按模型）
 type UsageSummary struct {
-	TotalRequests    int              `json:"total_requests"`
-	TotalPrompt      int              `json:"total_prompt_tokens"`
-	TotalCompletion  int              `json:"total_completion_tokens"`
-	TotalTokens      int              `json:"total_tokens"`
-	ByModel          map[string]int   `json:"by_model"`           // model → request count
-	ByModelTokens    map[string]int   `json:"by_model_tokens"`    // model → total tokens
-	ByDate           map[string]int   `json:"by_date"`            // YYYY-MM-DD → request count
-	ByDateTokens     map[string]int   `json:"by_date_tokens"`     // YYYY-MM-DD → total tokens
-	ErrorCount       int              `json:"error_count"`
-	EstimatedCostUSD float64          `json:"estimated_cost_usd"`
+	TotalRequests    int            `json:"total_requests"`
+	TotalPrompt      int            `json:"total_prompt_tokens"`
+	TotalCompletion  int            `json:"total_completion_tokens"`
+	TotalTokens      int            `json:"total_tokens"`
+	ByModel          map[string]int `json:"by_model"`        // model → request count
+	ByModelTokens    map[string]int `json:"by_model_tokens"` // model → total tokens
+	ByDate           map[string]int `json:"by_date"`         // YYYY-MM-DD → request count
+	ByDateTokens     map[string]int `json:"by_date_tokens"`  // YYYY-MM-DD → total tokens
+	ErrorCount       int            `json:"error_count"`
+	EstimatedCostUSD float64        `json:"estimated_cost_usd"`
 }
 
 // UsageTracker 管理用量追踪
@@ -58,19 +60,38 @@ type UsageTracker struct {
 }
 
 // NewUsageTracker 创建用量追踪器
+//
+// maxStore=50000 — 旧版 10000 在重度使用下一天就能打爆（每条 chat 一条
+// record），导致昨天的数据被滑动窗口挤出，前端「by_date」分组里看到的
+// 当天总数比当时小很多。50000 配合 60 天保留窗口能覆盖绝大多数用户。
 func NewUsageTracker(dataDir string) *UsageTracker {
 	return &UsageTracker{
 		dataDir:  dataDir,
-		maxStore: 10000,
+		maxStore: 50000,
 		dirty:    true,
 	}
 }
 
+// filePath 是新版 JSONL append-only 持久化文件路径。
 func (t *UsageTracker) filePath() string {
+	return filepath.Join(t.dataDir, "relay_usage.jsonl")
+}
+
+// legacyFilePath 是旧版 JSON array 文件路径，启动时一次性迁移。
+func (t *UsageTracker) legacyFilePath() string {
 	return filepath.Join(t.dataDir, "relay_usage.json")
 }
 
 // Record 记录一次用量
+//
+// 持久化策略：
+//   - 正常路径：单行 JSON append 到 .jsonl（O(1) 写一行，不再全量重写）。
+//   - 滑窗触发：当 maxStore 超过时滑窗 + 一次性 compact 重写整个文件
+//     （atomic rename）。
+//
+// 旧实现每条 Record 都 marshal + WriteFile 整个 records，并发 + 高频聊天
+// 场景下 IO 压力很大，且非原子写崩溃中途易损坏文件 → 下次 load 全部丢失，
+// 用户感知为「昨天的数据第二天变少」。
 func (t *UsageTracker) Record(rec UsageRecord) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -85,12 +106,16 @@ func (t *UsageTracker) Record(rec UsageRecord) {
 		rec.At = time.Now().Format(time.RFC3339)
 	}
 	t.records = append(t.records, rec)
-	// 超过上限时裁剪旧记录
+	t.markSummaryDirtyLocked()
+
+	// 超过上限：滑窗 + 全量 compact（atomic rename，不会丢数据）
 	if t.maxStore > 0 && len(t.records) > t.maxStore {
 		t.records = t.records[len(t.records)-t.maxStore:]
+		t.compactLocked()
+		return
 	}
-	t.markSummaryDirtyLocked()
-	t.saveLocked()
+	// 正常路径：append 一行到 JSONL
+	t.appendLocked(rec)
 }
 
 // GetRecords 返回所有记录（最近的在前）
@@ -173,7 +198,7 @@ func (t *UsageTracker) computeSummaryLocked() UsageSummary {
 			// 默认按 Opus 定价估算（用户常用）
 			pPrice, cPrice = 5.00, 25.00
 		}
-		
+
 		cost := (float64(r.PromptTokens) / 1000000.0 * pPrice) + (float64(r.CompletionTokens) / 1000000.0 * cPrice)
 		s.EstimatedCostUSD += cost
 	}
@@ -190,7 +215,9 @@ func (t *UsageTracker) DeleteAll() int {
 	n := len(t.records)
 	t.records = nil
 	t.markSummaryDirtyLocked()
-	t.saveLocked()
+	// 全清空：直接删文件（DeleteAll 后再启动应该是干净状态）+ 兜底删旧 .json
+	_ = os.Remove(t.filePath())
+	_ = os.Remove(t.legacyFilePath())
 	return n
 }
 
@@ -214,7 +241,7 @@ func (t *UsageTracker) DeleteBefore(before time.Time) int {
 	t.records = kept
 	if deleted > 0 {
 		t.markSummaryDirtyLocked()
-		t.saveLocked()
+		_ = t.compactLocked()
 	}
 	return deleted
 }
@@ -231,57 +258,206 @@ func (t *UsageTracker) Count() int {
 
 // ── 持久化 ──
 
+// loadLocked 加载持久化数据。
+//
+// 优先级：
+//  1. 优先读取 .jsonl（新格式，append-only）；
+//  2. .jsonl 不存在但有 .json（旧格式 JSON array）→ 一次性迁移；
+//  3. 都没有 → records 置空。
+//
+// 容错：单行解析失败时跳过该行而非整体 fail，避免「某行损坏导致历史
+// 数据全丢」（旧实现 json.Unmarshal 整体 fail 就清空）。
 func (t *UsageTracker) loadLocked() {
 	t.loaded = true
-	data, err := os.ReadFile(t.filePath())
-	if err != nil {
-		t.records = nil
+	t.records = nil
+
+	// 1) 新格式 JSONL
+	if records, ok := t.readJSONLLocked(); ok {
+		sort.Slice(records, func(i, j int) bool {
+			return records[i].At < records[j].At
+		})
+		t.records = records
 		t.markSummaryDirtyLocked()
 		return
 	}
-	var records []UsageRecord
-	if err := json.Unmarshal(data, &records); err != nil {
-		t.records = nil
+
+	// 2) 旧格式 JSON array → 迁移
+	if records, ok := t.readLegacyJSONLocked(); ok {
+		sort.Slice(records, func(i, j int) bool {
+			return records[i].At < records[j].At
+		})
+		t.records = records
+		// 写入新格式（atomic），成功后删除旧文件
+		if err := t.compactLocked(); err == nil {
+			_ = os.Remove(t.legacyFilePath())
+		}
 		t.markSummaryDirtyLocked()
 		return
 	}
-	// 按时间排序
-	sort.Slice(records, func(i, j int) bool {
-		return records[i].At < records[j].At
-	})
-	t.records = records
+
 	t.markSummaryDirtyLocked()
 }
 
-func (t *UsageTracker) saveLocked() {
-	os.MkdirAll(t.dataDir, 0755)
-	data, err := json.MarshalIndent(t.records, "", "  ")
+// readJSONLLocked 读取新格式文件；返回 ok=false 表示文件不存在或不是 JSONL。
+func (t *UsageTracker) readJSONLLocked() ([]UsageRecord, bool) {
+	f, err := os.Open(t.filePath())
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	// 单条记录可能 > 64KB（极端 prompt），把上限拉到 1MB。
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	records := make([]UsageRecord, 0, 128)
+	corrupted := 0
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var rec UsageRecord
+		if err := json.Unmarshal(line, &rec); err != nil {
+			corrupted++
+			continue // 容错：跳过单行损坏
+		}
+		records = append(records, rec)
+	}
+	if err := scanner.Err(); err != nil {
+		// 文件中途出错也不丢已读出的部分
+		_ = err
+	}
+	if corrupted > 0 {
+		// 启动一次性提示；不打到 trafficLog 避免循环依赖
+		fmt.Fprintf(os.Stderr, "[usage] 跳过 %d 行损坏数据（保留 %d 条）\n", corrupted, len(records))
+	}
+	return records, true
+}
+
+// readLegacyJSONLocked 读取旧格式 JSON array；返回 ok=false 表示文件不存在或解析失败。
+func (t *UsageTracker) readLegacyJSONLocked() ([]UsageRecord, bool) {
+	data, err := os.ReadFile(t.legacyFilePath())
+	if err != nil {
+		return nil, false
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil, true // 空文件视为已迁移
+	}
+	var records []UsageRecord
+	if err := json.Unmarshal(data, &records); err != nil {
+		// 旧文件损坏 — 备份再清空，避免下次启动反复尝试解析
+		_ = os.Rename(t.legacyFilePath(), t.legacyFilePath()+".corrupted")
+		return nil, false
+	}
+	return records, true
+}
+
+// appendLocked 把单条记录 O(1) 写入 .jsonl 末尾。
+//
+// 不做 fsync —— 操作系统 page cache 通常 30s 内 flush，正常关机下不会
+// 丢；崩溃极端场景下最多丢最近几秒的记录，不会影响历史数据。
+// 比起旧实现每条全量重写整个文件，append-only 既快又不会损坏历史。
+func (t *UsageTracker) appendLocked(rec UsageRecord) {
+	if err := os.MkdirAll(t.dataDir, 0755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(t.filePath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(t.filePath(), data, 0644)
+	defer f.Close()
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return
+	}
+	data = append(data, '\n')
+	_, _ = f.Write(data)
+}
+
+// compactLocked 全量重写整个 .jsonl 文件（atomic rename）。
+//
+// 用于 DeleteAll / DeleteBefore / 滑窗触发等需要丢弃部分记录的场景，
+// 以及旧格式迁移。先写入 .tmp 再 Rename — 崩溃中途也不会损坏目标文件。
+func (t *UsageTracker) compactLocked() error {
+	if err := os.MkdirAll(t.dataDir, 0755); err != nil {
+		return err
+	}
+	tmp := t.filePath() + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	w := bufio.NewWriter(f)
+	for _, rec := range t.records {
+		data, err := json.Marshal(rec)
+		if err != nil {
+			continue // 单条 marshal 失败不影响整体
+		}
+		_, _ = w.Write(data)
+		_ = w.WriteByte('\n')
+	}
+	if err := w.Flush(); err != nil {
+		f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, t.filePath())
 }
 
 // estimateTokens 粗略估算 token 数
 // 按字符类型分桶：ASCII ~4 字符/token, CJK ~1.5 字符/token, 空白 ~6 字符/token
 func estimateTokens(text string) int {
-	var asciiChars, cjkChars, spaceChars int
+	var acc tokenAccumulator
+	acc.Add(text)
+	return acc.Total()
+}
+
+// tokenAccumulator 增量 token 计数器（P7 优化）。
+//
+// 旧实现 ConnectStreamWatcher 用 strings.Builder 累积所有 chunk 文本，
+// finalize 一次性 estimateTokens。长对话累 1-5MB string 占内存且 finalize
+// 还要再 range 一次 — 无谓 2× CPU + 内存峰值。
+//
+// 新实现：每帧 Add(text) 直接 range rune 增量累计 ascii/cjk/space 三类，
+// Total() 一次除法收尾。完全省掉 string 累积，CPU 一遍扫完。
+type tokenAccumulator struct {
+	ascii int
+	cjk   int
+	space int
+}
+
+// Add 把 text 的 rune 分类统计到累加器（不保留 text 引用）。
+func (a *tokenAccumulator) Add(text string) {
 	for _, r := range text {
 		switch {
 		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
-			spaceChars++
+			a.space++
 		case r < 0x80:
-			asciiChars++
+			a.ascii++
 		default:
-			cjkChars++
+			a.cjk++
 		}
 	}
-	if asciiChars+cjkChars+spaceChars == 0 {
+}
+
+// Total 返回当前累计的近似 token 数（与 estimateTokens 等价公式）。
+func (a *tokenAccumulator) Total() int {
+	if a.ascii+a.cjk+a.space == 0 {
 		return 0
 	}
 	// tokens ≈ ascii/4 + cjk/1.5 + space/6
 	// 公分母 12: (ascii*3 + cjk*8 + space*2) / 12，+11 做向上取整
-	n := (asciiChars*3 + cjkChars*8 + spaceChars*2 + 11) / 12
+	n := (a.ascii*3 + a.cjk*8 + a.space*2 + 11) / 12
 	if n == 0 {
 		n = 1
 	}

@@ -34,30 +34,29 @@ func getWindsurfProcesses() []map[string]interface{} {
 			continue
 		}
 		name := fields[0]
-		pid := fields[1]
+		pidInt, _ := strconv.Atoi(strings.TrimSpace(fields[1]))
 		memStr := strings.ReplaceAll(fields[4], ",", "")
 		memStr = strings.ReplaceAll(memStr, ".", "")
 		memStr = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(memStr), "K"))
 		memKB, _ := strconv.ParseInt(memStr, 10, 64)
 
-		totalMem += memKB * 1024
+		memBytes := memKB * 1024
+		totalMem += memBytes
 		results = append(results, map[string]interface{}{
-			"name":       name,
-			"pid":        pid,
-			"memory_kb":  memKB,
-			"memory_mb":  float64(memKB) / 1024,
-			"memory_str": humanSize(memKB * 1024),
+			"pid":          pidInt,
+			"name":         name,
+			"cpu_percent":  0.0, // tasklist 不直接给 CPU%；保留 0 不至于让前端渲染崩
+			"memory_bytes": memBytes,
 		})
 	}
 
 	if len(results) > 0 {
-		// 添加汇总
+		// 汇总行
 		results = append(results, map[string]interface{}{
-			"name":       "== 合计 ==",
-			"pid":        "",
-			"memory_kb":  totalMem / 1024,
-			"memory_mb":  float64(totalMem) / 1024 / 1024,
-			"memory_str": humanSize(totalMem),
+			"pid":          0,
+			"name":         "== 合计 ==",
+			"cpu_percent":  0.0,
+			"memory_bytes": totalMem,
 		})
 	}
 	return results

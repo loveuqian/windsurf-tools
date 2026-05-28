@@ -29,3 +29,71 @@ func (a *App) onBeforeClose(ctx context.Context) bool {
 	a.shuttingDown.Store(true)
 	return false // 允许关闭
 }
+
+// ── 2.4: 窗口尺寸 / 位置记忆 ────────────────────────────────────────────────
+
+// SaveWindowGeometry 把当前窗口尺寸 + 位置 + 最大化状态写入 settings。
+// 由前端 resize/move 防抖 1.5s 触发，仅持久化非最大化的「正常状态尺寸」，
+// 这样下次启动用户能恢复到自己拖拽好的窗口大小。
+//
+// 入参合法性：宽高 >= 600/400 才写盘（防止极端值把窗口卡到看不见）；
+// X/Y 任意，但完全不可见的位置（< -1000）忽略。
+func (a *App) SaveWindowGeometry(width, height, x, y int, maximized bool) error {
+	if a.store == nil {
+		return nil
+	}
+	prev := a.store.GetSettings()
+	next := prev
+	// 钳制极端值
+	if !maximized {
+		if width < 600 || height < 400 {
+			return nil
+		}
+		next.WindowWidth = width
+		next.WindowHeight = height
+		if x > -10000 && y > -10000 {
+			next.WindowX = x
+			next.WindowY = y
+		}
+	}
+	next.WindowMaximized = maximized
+	return a.store.UpdateSettings(next)
+}
+
+// RestoreWindowGeometry 启动时由前端调用，从 settings 还原窗口几何。
+// 因 Wails options.Width/Height 不能动态读取 store，只能在 DOM 就绪后通过
+// runtime.WindowSetSize / WindowSetPosition / WindowMaximise 调整。
+//
+// 返回应用的几何（前端可用作 sanity check）；首次启动 / 无保存值 → 返回 (0,0,-1,-1,false)。
+func (a *App) RestoreWindowGeometry() map[string]any {
+	if a.store == nil || a.ctx == nil {
+		return map[string]any{"applied": false}
+	}
+	s := a.store.GetSettings()
+	if s.WindowMaximized {
+		runtime.WindowMaximise(a.ctx)
+		return map[string]any{
+			"applied":   true,
+			"maximized": true,
+		}
+	}
+	w, h := s.WindowWidth, s.WindowHeight
+	x, y := s.WindowX, s.WindowY
+	applied := false
+	if w >= 600 && h >= 400 {
+		runtime.WindowSetSize(a.ctx, w, h)
+		applied = true
+	}
+	if x > -10000 && y > -10000 && (x != -1 || y != -1) {
+		runtime.WindowSetPosition(a.ctx, x, y)
+		applied = true
+	}
+	return map[string]any{
+		"applied":   applied,
+		"width":     w,
+		"height":    h,
+		"x":         x,
+		"y":         y,
+		"maximized": false,
+	}
+}

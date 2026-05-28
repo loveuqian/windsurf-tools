@@ -2,12 +2,10 @@ package services
 
 import (
 	"bytes"
-	"compress/gzip"
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"io"
 	mathr "math/rand"
 	"regexp"
 	"strings"
@@ -271,13 +269,9 @@ func decompressBody(body []byte) ([]byte, envelopeType) {
 			diff := len(body) - 5 - int(payloadLen)
 			if diff >= -10 && diff <= 10 {
 				if flags&0x01 != 0 {
-					reader, err := gzip.NewReader(bytes.NewReader(body[5:]))
-					if err == nil {
-						decompressed, err := io.ReadAll(reader)
-						reader.Close()
-						if err == nil {
-							return decompressed, envelopeConnectGzip
-						}
+					// ★ D-5: gzip pool 复用 Reader，避免每请求 ~32KB deflate state 分配。
+					if decompressed, err := gunzipBytes(body[5:]); err == nil {
+						return decompressed, envelopeConnectGzip
 					}
 				} else {
 					return body[5 : 5+int(payloadLen)], envelopeConnectRaw
@@ -291,11 +285,8 @@ func decompressBody(body []byte) ([]byte, envelopeType) {
 func recompressBody(raw []byte, etype envelopeType) []byte {
 	switch etype {
 	case envelopeConnectGzip:
-		var buf bytes.Buffer
-		w := gzip.NewWriter(&buf)
-		_, _ = w.Write(raw)
-		w.Close()
-		compressed := buf.Bytes()
+		// ★ D-5: gzip pool 复用 Writer，避免每请求 ~32KB deflate state + 哈夫曼表初始化。
+		compressed := gzipBytes(raw)
 		envelope := make([]byte, 5+len(compressed))
 		envelope[0] = 0x01
 		binary.BigEndian.PutUint32(envelope[1:5], uint32(len(compressed)))
@@ -849,13 +840,9 @@ func ExtractJWTFromBody(body []byte) string {
 			end := 5 + int(plen)
 			if len(raw) >= end {
 				if flags&0x01 != 0 {
-					reader, err := gzip.NewReader(bytes.NewReader(raw[5:]))
-					if err == nil {
-						decompressed, err := io.ReadAll(reader)
-						reader.Close()
-						if err == nil {
-							raw = decompressed
-						}
+					// ★ D-5: gzip pool 复用 Reader。
+					if decompressed, err := gunzipBytes(raw[5:end]); err == nil {
+						raw = decompressed
 					}
 				} else {
 					raw = raw[5:end]

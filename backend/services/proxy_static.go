@@ -62,8 +62,9 @@ func loadStaticFile(dir, name string) ([]byte, bool) {
 		return nil, false
 	}
 
+	cacheKey := fpath
 	staticCache.mu.RLock()
-	if e, ok := staticCache.entries[name]; ok && e.modTime.Equal(info.ModTime()) {
+	if e, ok := staticCache.entries[cacheKey]; ok && e.modTime.Equal(info.ModTime()) {
 		data := make([]byte, len(e.data))
 		copy(data, e.data)
 		staticCache.mu.RUnlock()
@@ -82,14 +83,18 @@ func loadStaticFile(dir, name string) ([]byte, bool) {
 	}
 
 	staticCache.mu.Lock()
-	staticCache.entries[name] = &staticEntry{data: data, modTime: info.ModTime()}
+	staticCache.entries[cacheKey] = &staticEntry{data: data, modTime: info.ModTime()}
 	staticCache.mu.Unlock()
 	return data, true
 }
 
 func invalidateStaticCache(name string) {
 	staticCache.mu.Lock()
-	delete(staticCache.entries, name)
+	for key := range staticCache.entries {
+		if key == name || filepath.Base(key) == name {
+			delete(staticCache.entries, key)
+		}
+	}
 	staticCache.mu.Unlock()
 }
 
@@ -98,17 +103,20 @@ func invalidateStaticCache(name string) {
 // tryServeStaticCache intercepts matching endpoints and returns cached .bin files
 // directly, bypassing the upstream ReverseProxy. Returns true if handled.
 func (p *MitmProxy) tryServeStaticCache(w http.ResponseWriter, r *http.Request) bool {
+	// ★ 性能：每个请求（含 chat 流式 hot path）都跑这函数。先做无锁的 path
+	// 检查，不匹配静态 endpoint（chat / cortex / trajectory 都不匹配）直接 return，
+	// 避免 RLock + struct 复制 ＋ 失败分支。
+	urlPath := r.URL.Path
+	name := staticCacheFileName(urlPath)
+	if name == "" {
+		return false
+	}
+
 	p.mu.RLock()
 	cfg := p.staticCacheConfig
 	p.mu.RUnlock()
 
 	if !cfg.Enabled || cfg.CacheDir == "" {
-		return false
-	}
-
-	urlPath := r.URL.Path
-	name := staticCacheFileName(urlPath)
-	if name == "" {
 		return false
 	}
 

@@ -61,6 +61,10 @@ func (a *App) onMitmKeyExhausted(apiKey string) {
 	_ = a.RefreshAccountQuota(accID)
 
 	s := a.store.GetSettings()
+	// F3: 触发冷却（quota 类）—— 后续自动选号会跳过此账号 cooldown 时间内
+	if s.SwitchCooldownEnabled {
+		switchCooldown.apply(accID, "quota", s.SwitchCooldownBaseSec)
+	}
 	// Pin 优先：手动锁定时跳过所有自动切（用户 100% 控制）
 	if s.ManualPinEnabled {
 		utils.DLog("[回调] onKeyExhausted: ManualPin 生效 (pin=%s)，跳过自动切", s.ManualPinAccountID[:min(8, len(s.ManualPinAccountID))])

@@ -426,6 +426,94 @@ func TestPendingKeySkipsExcludedKey(t *testing.T) {
 	}
 }
 
+// ── ManualPin / stickyKey 行为测试 ───────────────────────────────────────
+
+// TestStickyKey_ForcesNewConversation 验证：设置 stickyKey 后，pickKeyForNewConversation
+// 不再走 leastConnections，多次新对话全部用同一个 sticky key。
+//
+// 这是核心 bug fix：用户手动切到 X → ManualPin 启用 → SetStickyKey(X) →
+// 接下来所有新对话都用 X，而不是被 leastConnections 分散到 key-b/key-c。
+func TestStickyKey_ForcesNewConversation(t *testing.T) {
+	p := newTestProxy([]string{"key-a", "key-b", "key-c"})
+	p.SetStickyKey("key-b")
+
+	for i := 0; i < 10; i++ {
+		k, jwt := p.pickKeyForNewConversation()
+		if k != "key-b" {
+			t.Errorf("call %d: pickKeyForNewConversation = %q, want sticky key-b", i, k)
+		}
+		if len(jwt) == 0 {
+			t.Errorf("call %d: empty JWT", i)
+		}
+	}
+}
+
+// TestStickyKey_SecondMessageBinding 验证：第一条无 convID 用 sticky → push pending →
+// 第二条带 convID 也能从 pending 弹出 sticky 完成绑定。
+func TestStickyKey_SecondMessageBinding(t *testing.T) {
+	p := newTestProxy([]string{"key-a", "key-b", "key-c"})
+	p.SetStickyKey("key-c")
+
+	first, _ := p.pickKeyForNewConversation()
+	if first != "key-c" {
+		t.Fatalf("first message: got %q, want sticky key-c", first)
+	}
+	second, _ := p.pickPoolKeyForSession("conv-sticky-test-1")
+	if second != "key-c" {
+		t.Errorf("second message: got %q, want sticky key-c (pending should match)", second)
+	}
+}
+
+// TestStickyKey_FallbackWhenStickyMissing 验证：sticky key 不在 pool 时
+// （比如号被删了），优雅降级到 leastConnections，不卡死。
+func TestStickyKey_FallbackWhenStickyMissing(t *testing.T) {
+	p := newTestProxy([]string{"key-a", "key-b"})
+	p.SetStickyKey("key-not-in-pool")
+
+	// pickStickyKey 返回 ("", nil) → 走原 leastConnections 路径
+	k, jwt := p.pickKeyForNewConversation()
+	if k == "" || len(jwt) == 0 {
+		t.Fatal("should fallback to leastConnections when sticky missing")
+	}
+	if k == "key-not-in-pool" {
+		t.Error("should NOT use missing sticky key")
+	}
+}
+
+// TestStickyKey_ClearRestoresLoadBalance 验证：SetStickyKey("") 清除粘性后，
+// 恢复 leastConnections 分散行为。
+func TestStickyKey_ClearRestoresLoadBalance(t *testing.T) {
+	p := newTestProxy([]string{"key-a", "key-b", "key-c"})
+	p.SetStickyKey("key-b")
+	p.SetStickyKey("") // 清除
+
+	keys := make(map[string]int)
+	for i := 0; i < 6; i++ {
+		k, _ := p.pickKeyForNewConversation()
+		keys[k]++
+	}
+	// 清除后应该重新分散到所有 key
+	if keys["key-a"] == 0 && keys["key-c"] == 0 {
+		t.Errorf("after clear, expected distribution; got %+v", keys)
+	}
+}
+
+// TestStickyKey_PoolFallbackOnUnboundConv 验证：第二条消息带新 convID
+// 但 pending 已被排空时，仍优先 sticky 而不是 leastConnections。
+func TestStickyKey_PoolFallbackOnUnboundConv(t *testing.T) {
+	p := newTestProxy([]string{"key-a", "key-b", "key-c"})
+	p.SetStickyKey("key-a")
+
+	// 直接给一个全新 convID（pending 是空的，模拟 IDE 重启后第一条带 conv 的消息）
+	k, jwt := p.pickPoolKeyForSession("brand-new-conv-id-no-pending")
+	if k != "key-a" {
+		t.Errorf("unbound conv with sticky: got %q, want sticky key-a", k)
+	}
+	if len(jwt) == 0 {
+		t.Error("expected non-empty JWT")
+	}
+}
+
 func TestIsChatPath(t *testing.T) {
 	tests := []struct {
 		path string

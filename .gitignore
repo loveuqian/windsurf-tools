@@ -35,6 +35,7 @@ tools/**/*.csv
 tools/**/*.log
 
 # 调试用测试/二进制
+sniff
 sniff.exe
 backend/services/*_debug_test.go
 backend/services/*_diag_test.go

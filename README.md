@@ -8,7 +8,7 @@
 > **Windsurf IDE 无限续杯工具 — 多账号自动切换、额度用完自动换号、无感代理、本地 OpenAI 接口**
 > Seamless MITM proxy for Windsurf IDE — auto account rotation when quota exhausted, batch import, local OpenAI-compatible relay. One-click setup, cross-platform.
 
-基于 [Wails v2](https://wails.io/) (Go + Vue 3) 的桌面工具，为 Windsurf / Codeium IDE 提供：
+基于 [Wails v2](https://wails.io/) (Go + React + Zustand) 的桌面工具，为 Windsurf / Codeium IDE 提供：
 
 - 🔄 **额度用完自动换号** — 检测到当前账号额度耗尽，秒级自动切换到下一个可用账号，Cascade 对话不中断、不报错，真正无限续杯
 - 🎯 **多账号号池管理** — Free / Trial / Pro / Max 多套餐统一管理，支持手动锁定、轮换池、会话粘性，想用哪个用哪个
@@ -37,28 +37,28 @@
 | :---: |
 | ![Accounts](docs/images/preview-accounts.png) |
 
-#### 2. 本地 OpenAI API 兼容中转 (OpenAI Relay)
+#### 3. 本地 OpenAI API 兼容中转 (OpenAI Relay)
 集成 SSE 流式输出能力。您可以将自己购买或获取到的账号无缝接入类似 `ChatGPT-Next-Web`, `LobeChat`, `Cursor`, 甚至 `OpenAI SDK` 客户端。后端自带健康检测与故障倒换，前端全UI掌控模型映射。
 
 | OpenAI Relay 控制台 |
 | :---: |
 | ![Relay](docs/images/preview-relay.png) |
 
-#### 3. 流量用量统计面板 (Usage & Diagnostics)
+#### 4. 流量用量统计面板 (Usage & Diagnostics)
 全新设计的 **Usage Dashboard** 精确计算并聚合从您机器发往 Windsurf / OpenAI 的全部流通 Token 的数量以及大略转换的美金价值，全方位杜绝隐藏费用，更有完整历史流水审计明细。
 
 | 数据用量与流水洞察 |
 | :---: |
 | ![Usage](docs/images/preview-usage.png) |
 
-#### 4. 高级抓包与环境调试引擎 (Advanced MITM Config)
+#### 5. 高级抓包与环境调试引擎 (Advanced MITM Config)
 强大的 MITM 号池设置机制！从会话固化（Session Binding）、静默截获到高能协议体 Protobuf 的深度解析与截流。更支持直接抓取原始流水（Dump），方便二次排查分析。
 
 | 核心层代理与策略配置 |
 | :---: |
 | ![Settings](docs/images/preview-settings.png) |
 
-#### 5. 垃圾与残留清道夫 (Clean-Up Optimizer)
+#### 6. 垃圾与残留清道夫 (Clean-Up Optimizer)
 不再让海量 Cascade AI 对话数据和渲染缓存吃掉你珍贵的硬盘空间！轻轻一点即可完成各环节的精简化部署清理，重获新生。
 
 | 磁盘瘦身优化 |
@@ -195,11 +195,15 @@ wails build
 
 ---
 
-## ⚙️ 系统集成：服务化运转模式
+## ⚙️ 系统集成：静默启动与托盘运行
 
-支持基于 [kardianos/service](https://github.com/kardianos/service) 的无 UI 后台服务模式（纯 Daemon），使得你的工作环境能持久享受 OpenAI 中继及 MITM 打通福利！
+支持静默启动和托盘后台运行，使 MITM、OpenAI Relay、Clash 轮换、轮换池等能力在桌面进程内持续工作。
 
-`windsurf-tools-wails.exe install/start/stop`
+```bash
+./windsurf-tools-wails --silent-start
+```
+
+也可以在设置中开启「启动时不显示主窗口」和「关闭窗口时最小化到托盘」。
 
 ---
 
@@ -210,6 +214,26 @@ wails build
 - **macOS**：`~/.windsurf-tools/`（含 CA 证书 `ca/ca.pem`）
 
 内部保存 `accounts.json`、`settings.json` 及全套 MITM 证书。**切勿向公共仓库提交这些文件。** 详见 [SECURITY.md](SECURITY.md)。
+
+---
+
+## 🛠️ 环境变量 | Environment Variables
+
+应用本身零配置即可运行；以下变量仅供调试 / 开发者：
+
+| 变量 | 作用 | 适用场景 |
+|---|---|---|
+| `WINDSURF_TOOLS_DEBUG_STDOUT=1` | 没开「调试日志」开关时也把 `utils.DLog(...)` 打到 stderr | 用 `go run` 跑、想看实时切号 / 代理判定输出 |
+| `SNIFF_BASE_DIR=/path/to/dir` | `tools/sniff` 抓包工具的输出基目录 | 调试 Windsurf IDE 协议帧 |
+
+启动示例：
+
+```bash
+WINDSURF_TOOLS_DEBUG_STDOUT=1 ./windsurf-tools-wails           # 不开 UI 开关也能看日志
+SNIFF_BASE_DIR=/tmp/sniff go run ./tools/sniff                 # 跨平台抓包工具
+```
+
+> 生产用户用 UI 的「调试日志」开关即可，`debug.log` 写到数据目录内。
 
 ---
 
@@ -228,8 +252,8 @@ wails build
 
 **新增「关于」+「帮助」视图 + 法律免责声明 | About/Help/Legal**
 
-- **新视图 `About.vue`** — 三栏 QR 码区：作者微信 (Seven77078) / 赞赏码 / 微信交流群（3 张图轮播）+ 点击放大 Lightbox + 复制微信号按钮 + 仓库链接。所有图嵌入 vite hash 资源。
-- **新视图 `Help.vue` (7 章 FAQ)** — iOS Settings disclosure 风折叠，覆盖：
+- **新视图 `About.tsx`** — 三栏 QR 码区：作者微信 (Seven77078) / 赞赏码 / 微信交流群（3 张图轮播）+ 点击放大 Lightbox + 复制微信号按钮 + 仓库链接。所有图嵌入 vite hash 资源。
+- **新视图 `Help.tsx` (7 章 FAQ)** — iOS Settings disclosure 风折叠，覆盖：
   - **1. 我该选哪种模式？** — IDE 直接切号 vs MITM 代理 对比 (Switch-Account-Local vs SwitchMitmToAccount)
   - **2. API Key 是什么？怎么获取？** — sk-ws- 前缀 + 来源
   - **3. 怎么导入账号？** — 4 种凭证自动识别 + 去重
@@ -237,7 +261,7 @@ wails build
   - **5. 号池轮换 + Pin + Pool** — 3 个自动触发点 + 手动锁定 + 轮换池
   - **6. Clash IP 智能启用** — 防限速 + type-aware 过滤
   - **7. Cascade 破限注入** — 原理 + 4 个预设风险对比表
-- **法律免责声明组件 `LegalDisclaimer.vue`** — 6 条核心：用途限定 / 自负风险 / 账号合法性 / 本地处理 / 破限风险 / 开源免费
+- **法律免责声明组件 `LegalDisclaimer.tsx`** — 6 条核心：用途限定 / 自负风险 / 账号合法性 / 本地处理 / 破限风险 / 开源免费
 - **Sidebar 底部双按钮入口** — 「帮助」(蓝) + 「关于」(红)，不占主菜单
 - **章节搜索** — Help 页顶部搜索框，按关键词过滤章节
 
@@ -345,8 +369,8 @@ wails build
 - **导入未识别提示** — `importAutoDetect` 加 `unknown` 类型，短输入/中文备注/乱码不再被强塞为 refresh_token 提交浪费请求；UI 显示 `X 行未识别` 警示
 
 **Bug 修复 | Bugfixes**
-- **Settings.vue `SkeletonBlock` 漏 import** — 11 处 template 使用但没 import，Vue 控制台报 `Failed to resolve component` (critical runtime bug)
-- **MitmPanel `v-for :key` 撞车** — pool_status 列表用 `key_short` 作 key，`devin-session-token$<JWT>` 类账号共享 16 字符前缀，Vue 错误复用节点。改用 `key_hash`(sha256 前 12 hex)
+- **Settings 视图 `SkeletonBlock` 漏 import** — 11 处骨架屏使用但没 import，控制台报 `Failed to resolve component` (critical runtime bug)
+- **MitmPanel 列表 key 撞车** — pool_status 列表用 `key_short` 作 key，`devin-session-token$<JWT>` 类账号共享 16 字符前缀，前端错误复用节点。改用 `key_hash`(sha256 前 12 hex)
 - **SessionBindingInfo 跨账号会话误算** — 同上原因，`pool_key_short` 全等过滤会把不同账号但前缀同的会话算到当前 key。后端 SessionBindingInfo 加 `pool_key_hash`，前端 Sidebar 用 hash 精确过滤
 - **Firebase 错误中文化** — `ImportByEmailPassword` 失败时把 `INVALID_LOGIN_CREDENTIALS` / `EMAIL_NOT_FOUND` / `TOO_MANY_ATTEMPTS_TRY_LATER` / `USER_DISABLED` 等英文错误映射成中文
 - **ImportModal 关闭不清 inputText** — 切到 Accounts 重开导入仍能看到上次残留
@@ -357,8 +381,8 @@ wails build
 **清理 | Cleanup**
 - 删 `ImportModal` 4 个未用 import (`toAPIKeyItems` 等)
 - 删 `settingsModel.ts` 17 处多余 `(s as any)` cast — models.Settings 已含所有字段
-- 删 `Cleanup.vue` 5 处 `(APIInfo as any)` cast — 方法都已正确暴露
-- **Accounts.vue 性能优化** — `quickFilterOptions` 从 O(8N) 降到 O(N)，单次遍历计算 7 个 filter 命中数
+- 删 `Cleanup` 5 处 `(APIInfo as any)` cast — 方法都已正确暴露
+- **Accounts 性能优化** — `quickFilterOptions` 从 O(8N) 降到 O(N)，单次遍历计算 7 个 filter 命中数
 
 ### v1.0.0 (2026-05-09)
 

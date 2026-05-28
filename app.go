@@ -38,6 +38,8 @@ type App struct {
 	lastQuotaHotSwitchMu   sync.Mutex
 	tokenRefreshRunMu      sync.Mutex
 	quotaRefreshRunMu      sync.Mutex
+	tasks                  *TaskRegistry       // F1: 批量任务进度面板
+	switchHistory          *switchHistoryStore // F2: 切号历史持久化
 	mu                     sync.Mutex
 	cleanupMitmOnExitFn    func() error
 	activateExistingAppFn  func()
@@ -64,6 +66,8 @@ func (a *App) initBackend() error {
 	}
 	a.store = s
 	a.windsurfSvc = services.NewWindsurfService("")
+	a.tasks = NewTaskRegistry()
+	a.switchHistory = newSwitchHistoryStore(s.DataDir())
 	// ── 调试日志 ──
 	settings := a.store.GetSettings()
 	utils.InitDebugLogger(s.DataDir(), settings.DebugLog)
@@ -104,6 +108,9 @@ func (a *App) initBackend() error {
 	a.syncForgeConfig()
 	a.syncStaticCacheConfig()
 	a.syncJailbreakConfig()
+	// ★ 启动时若 settings 显示已 Pin → 把 stickyKey 推给 MITM，避免重启后新对话又被分散
+	a.syncMitmStickyFromPin()
+	a.syncMitmAutoSwitchOnQuotaExhausted()
 	// F7-REMOVAL: 下一行删除
 	a.syncSmartFriendConfig()
 	if settings.AutoRefreshTokens {
@@ -113,6 +120,7 @@ func (a *App) initBackend() error {
 		a.startAutoQuotaRefresh()
 	}
 	a.restartQuotaHotPollIfNeeded()
+	a.applyOpenAIRelaySettings()
 	a.applyClashRotatorSettings()
 	a.applyRotationPoolSettings()
 	return nil

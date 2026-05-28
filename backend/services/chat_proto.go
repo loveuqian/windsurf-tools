@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"runtime"
 	"strings"
 	"time"
@@ -49,10 +48,10 @@ func BuildChatRequestWithModel(messages []ChatMessage, apiKey, jwt, conversation
 }
 
 // F7-REMOVAL: 本函数是为 F7 专门引入的包装。删除时：
-//   1) 把该函数改名为 buildChatRequestWithModel、去掉 smartFriend 参数；
-//   2) 下面 F7 赋值块删掉，F7 回到字面量 5；
-//   3) openai_relay.go / relay_anthropic.go / chat_proto_test.go / 上面指向
-//      buildChatRequestWithModelMode 的调用点一并改回。
+//  1. 把该函数改名为 buildChatRequestWithModel、去掉 smartFriend 参数；
+//  2. 下面 F7 赋值块删掉，F7 回到字面量 5；
+//  3. openai_relay.go / relay_anthropic.go / chat_proto_test.go / 上面指向
+//     buildChatRequestWithModelMode 的调用点一并改回。
 func buildChatRequestWithModelMode(messages []ChatMessage, apiKey, jwt, conversationID, model string, fp *KeyFingerprint, smartFriend bool) []byte {
 	// F1: metadata
 	metadata := buildChatMetadata(apiKey, jwt, fp)
@@ -208,12 +207,10 @@ func decodeStreamEnvelopePayload(flags byte, payload []byte) ([]byte, error) {
 	if flags&streamEnvelopeCompressed == 0 {
 		return append([]byte(nil), payload...), nil
 	}
-	reader, err := gzip.NewReader(bytes.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("gzip reader: %w", err)
-	}
-	defer reader.Close()
-	decoded, err := io.ReadAll(reader)
+	// ★ 流式 hot path 性能：每个 chat 流式响应 100+ 帧，旧实现每帧
+	// gzip.NewReader 分配 ~32KB deflate state + 哈夫曼表 —— GC 抖动可观。
+	// 改用 gzip pool（gunzipBytes）复用 reader，初始化只在 cold-start。
+	decoded, err := gunzipBytes(payload)
 	if err != nil {
 		return nil, fmt.Errorf("gzip read: %w", err)
 	}
@@ -242,30 +239,27 @@ func ParseChatResponseChunk(data []byte) (text string, isDone bool, err error) {
 		return "", false, fmt.Errorf("empty protobuf chunk")
 	}
 
-	// 顶层 F3 字符串为文本增量（Windsurf 2026-04 抓包确认）。
+	// P6: 单循环同时扫描 F3 text + F5/F2 isDone（旧实现两遍遍历）。
 	for _, f := range fields {
-		if f.Number == 3 && f.Wire == 2 && isLikelyUTF8(f.Bytes) {
+		switch {
+		case f.Number == 3 && f.Wire == 2 && text == "" && isLikelyUTF8(f.Bytes):
+			// 顶层 F3 字符串为文本增量（Windsurf 2026-04 抓包确认）
 			text = string(f.Bytes)
-			break
+		case f.Number == 5 && f.Wire == 0 && f.Varint != 0:
+			// F5 = end-of-turn 标志（varint 非 0 即结束，末帧典型值 4）
+			isDone = true
+		case f.Number == 2 && f.Wire == 0 && f.Varint != 0:
+			// 旧协议 F2 varint 结束标志兼容
+			isDone = true
 		}
 	}
+
 	// 兼容旧协议：若顶层 F3 不是文本，回退到 F6.F3 / legacy 扫描。
 	if text == "" {
 		if preferred := extractProtoTextAtPath(fields, 6, 3); preferred != "" {
 			text = preferred
 		} else {
 			text = extractLegacyChatText(fields)
-		}
-	}
-
-	for _, f := range fields {
-		// F5 = end-of-turn 标志（varint 非 0 即结束，末帧典型值 4）。
-		if f.Number == 5 && f.Wire == 0 && f.Varint != 0 {
-			isDone = true
-		}
-		// 旧协议 F2 varint 结束标志兼容。
-		if f.Number == 2 && f.Wire == 0 && f.Varint != 0 {
-			isDone = true
 		}
 	}
 	return text, isDone, nil

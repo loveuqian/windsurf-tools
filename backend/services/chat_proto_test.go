@@ -54,8 +54,8 @@ func TestExtractGRPCFrames_DecodesCompressedConnectFrames(t *testing.T) {
 	frame2 := encodeBytesField(6, encodeBytesField(3, []byte("world")))
 
 	var stream []byte
-	stream = append(stream, appendStreamEnvelope(nil, streamEnvelopeCompressed, gzipBytes(t, frame1))...)
-	stream = append(stream, appendStreamEnvelope(nil, streamEnvelopeCompressed, gzipBytes(t, frame2))...)
+	stream = append(stream, appendStreamEnvelope(nil, streamEnvelopeCompressed, gzipBytesForTest(t, frame1))...)
+	stream = append(stream, appendStreamEnvelope(nil, streamEnvelopeCompressed, gzipBytesForTest(t, frame2))...)
 	stream = append(stream, appendStreamEnvelope(nil, streamEnvelopeEndStream, []byte(`{}`))...)
 
 	frames := ExtractGRPCFrames(stream)
@@ -291,7 +291,7 @@ func appendStreamEnvelope(dst []byte, flags byte, payload []byte) []byte {
 	return append(dst, frame...)
 }
 
-func gzipBytes(t *testing.T, payload []byte) []byte {
+func gzipBytesForTest(t *testing.T, payload []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)

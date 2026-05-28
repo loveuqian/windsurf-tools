@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 )
@@ -645,12 +644,9 @@ func (a *App) ApplyAllPerformanceFixes() map[string]string {
 	return a.ApplyPerformanceFix(ids)
 }
 
-// GetWindsurfProcessInfo 获取 Windsurf 进程内存/CPU 信息
+// GetWindsurfProcessInfo 获取 Windsurf 进程内存/CPU 信息。
+// Windows: tasklist；macOS/Linux: ps —— 见 app_cleanup_windows.go / app_cleanup_other.go。
 func (a *App) GetWindsurfProcessInfo() []map[string]interface{} {
-	if runtime.GOOS != "windows" {
-		return nil
-	}
-	// 使用 tasklist 获取 Windsurf 相关进程
 	return getWindsurfProcesses()
 }
 

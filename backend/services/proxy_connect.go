@@ -287,16 +287,25 @@ func formatConnectDetail(ce ConnectErrorResult) string {
 // ConnectStreamWatcher wraps a response body and watches for Connect EOS trailer frames.
 // When an EOS frame with an error is detected at the end of the stream, the appropriate
 // callback is invoked.
+//
+// 性能注：
+//   - P3：把 token 估算从「每帧 estimateTokens」改成 finalize 一次（旧实现）
+//   - P7：进一步把「累积全文 + finalize estimate」改成「增量 tokenAccumulator」
+//     长对话原本累 1-5MB 文本字符串，现在仅持 3 个 int 计数器。CPU 一遍扫完
+//     无重复，内存峰值显著下降。
+//
+// 帧解析（parseProtoFields / decodeStreamEnvelopePayload）仍逐帧进行 —— 必须
+// 及时拿到 chunk 文本累积分类计数，且解码后 raw bytes / chunk 文本可丢。
 type ConnectStreamWatcher struct {
 	inner     io.ReadCloser
-	buf       []byte // accumulated bytes for frame scanning
+	buf       []byte // last 8KB for EOS scanning
 	onError   func(ConnectErrorResult)
 	onSuccess func(int)
 	sawError  bool
 	finalized bool
 
-	grpcBuf          []byte
-	completionTokens int
+	grpcBuf      []byte           // 帧解析滚动 buffer（消费完即丢弃）
+	tokenCounter tokenAccumulator // P7: 增量 token 计数（替代 strings.Builder）
 }
 
 func NewConnectStreamWatcher(inner io.ReadCloser, onError func(ConnectErrorResult), onSuccess func(int)) *ConnectStreamWatcher {
@@ -311,31 +320,42 @@ func (w *ConnectStreamWatcher) Read(p []byte) (int, error) {
 	n, err := w.inner.Read(p)
 	if n > 0 {
 		chunk := p[:n]
+		// EOS scan buffer: 截断到最近 8KB（足以覆盖单个 EOS 帧）
 		w.buf = append(w.buf, chunk...)
-		// Try to detect EOS frames as they arrive
 		w.scanForEOS()
 
-		// ── 抓取 Tokens ──
+		// ── 帧解析（增量消费 grpcBuf，只累积已解码文本） ──
 		w.grpcBuf = append(w.grpcBuf, chunk...)
 		for len(w.grpcBuf) >= 5 {
 			flags := w.grpcBuf[0]
 			payloadLen := int(binary.BigEndian.Uint32(w.grpcBuf[1:5]))
 			if len(w.grpcBuf) < 5+payloadLen {
-				break // partial
+				break // partial frame，等下一次 Read
 			}
 			payload := w.grpcBuf[5 : 5+payloadLen]
 			w.grpcBuf = w.grpcBuf[5+payloadLen:]
 
 			if flags&2 != 0 {
-				continue // skip EOS
+				continue // EOS 帧由 finalize 统一处理
 			}
-			decoded, err := decodeStreamEnvelopePayload(flags, payload)
-			if err == nil && len(decoded) > 0 {
-				chunkResponse, _, err := ParseChatResponseChunk(decoded)
-				if err == nil && len(chunkResponse) > 0 {
-					w.completionTokens += estimateTokens(chunkResponse)
-				}
+			decoded, decErr := decodeStreamEnvelopePayload(flags, payload)
+			if decErr != nil || len(decoded) == 0 {
+				continue
 			}
+			chunkResponse, _, parseErr := ParseChatResponseChunk(decoded)
+			if parseErr == nil && len(chunkResponse) > 0 {
+				// P7: 增量累计 token 分类，不保留 chunk 文本字符串。
+				w.tokenCounter.Add(chunkResponse)
+			}
+		}
+		// ★ 性能：消费完所有 frame 时主动 compact，避免底层数组持续增长。
+		// 旧实现 `w.grpcBuf = w.grpcBuf[5+payloadLen:]` 只前移 slice header，
+		// 底层数组 N 次 append 后能涨到几 MB（每次扩容 2× + 复制）。
+		// 长流式响应（200+ frames）累计可观，且分配 + GC 成本拖慢逐帧 flush。
+		if len(w.grpcBuf) == 0 && cap(w.grpcBuf) > 32*1024 {
+			w.grpcBuf = nil // 让大 cap 数组 GC，下次 append 重新分配 0→16KB
+		} else if len(w.grpcBuf) == 0 {
+			w.grpcBuf = w.grpcBuf[:0] // 复用现有小 cap
 		}
 	}
 	if err == io.EOF {
@@ -354,9 +374,18 @@ func (w *ConnectStreamWatcher) scanForEOS() {
 	if w.sawError {
 		return
 	}
-	// Only keep the last 8KB for scanning (EOS frames are typically small)
+	// Only keep the last 8KB for scanning (EOS frames are typically small).
+	// ★ 性能：旧实现 `w.buf = w.buf[len(w.buf)-8192:]` 只前移 slice header，
+	// 底层数组 cap 持续增长（长流式响应累积几 MB）。仅当 cap 远超阈值时才主动
+	// 复制到新 8KB 数组，让旧大 cap 数组 GC。8KB 内的常态 path 仍是 in-place 切片。
 	if len(w.buf) > 8192 {
-		w.buf = w.buf[len(w.buf)-8192:]
+		if cap(w.buf) > 32*1024 {
+			fresh := make([]byte, 8192)
+			copy(fresh, w.buf[len(w.buf)-8192:])
+			w.buf = fresh
+		} else {
+			w.buf = w.buf[len(w.buf)-8192:]
+		}
 	}
 }
 
@@ -393,6 +422,7 @@ func (w *ConnectStreamWatcher) finalize() {
 	}
 
 	if !w.sawError && w.onSuccess != nil {
-		w.onSuccess(w.completionTokens)
+		// P7: 直接用增量计数器收尾，无需累积全文 string + 再 estimate 一遍。
+		w.onSuccess(w.tokenCounter.Total())
 	}
 }

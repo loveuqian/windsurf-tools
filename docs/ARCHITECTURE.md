@@ -1,16 +1,16 @@
 # Windsurf Tools 架构详解
 
-> 更新时间：2026-03-25
+> 更新时间：2026-05-18
 >
 > 这份文档基于当前仓库真实代码整理，重点覆盖：
 > - 项目整体架构与分层
 > - 账号池与配置存储
 > - 额度同步 / 额度恢复判定
 > - 文件切号与 MITM 无感切号
-> - 后台服务与 OpenAI Relay 的关系
+> - 桌面运行态与 OpenAI Relay 的关系
 > - 后续适合继续拆分和演进的方向
 >
-> 补充说明：自 2026-03-26 起，当前桌面前端产品路径已经收口为“纯 MITM 工作流”，主界面默认只暴露号池（MITM）、OpenAI Relay 和 MITM 相关设置。文档中仍会保留 `windsurf_auth.json` / SwitchService 等历史链路说明，因为这部分后端能力仍在仓库里，但它们不再是当前桌面壳的主入口。
+> 补充说明：当前桌面前端产品路径已经收口为“纯 MITM 工作流”，主界面默认暴露总览、号池、用量、OpenAI Relay、清理、设置、帮助与关于。`windsurf_auth.json` 文件切号链路仍作为后端兼容能力存在，但已经不是当前桌面壳的主入口。
 
 ---
 
@@ -20,7 +20,7 @@
 
 - 后端：Go
 - 桌面壳：Wails
-- 前端：Vue 3 + Pinia
+- 前端：React 18 + Zustand + Vite + TailwindCSS
 
 项目核心目标不是单纯“管理账号”，而是围绕 Windsurf 的多账号使用场景，提供一整套本地控制面。当前前端产品主线已经固定为纯 MITM 模式：
 
@@ -30,7 +30,7 @@
 - 额度用尽后的自动切号
 - MITM 无感换号
 - OpenAI 兼容中转
-- 无界面后台服务运行
+- 静默启动与托盘后台运行
 
 从架构视角看，它本质上是一个本地“控制器”：
 
@@ -46,22 +46,20 @@
 
 ```mermaid
 graph TD
-  UI["前端界面<br/>Vue Views + Pinia Stores"] --> WAILS["Wails 绑定层<br/>frontend/src/api/wails.ts"]
+  UI["前端界面<br/>React Views + Zustand Stores"] --> WAILS["Wails 绑定层<br/>frontend/src/api/wails.ts"]
   WAILS --> APP["应用编排层<br/>App + app_*.go"]
 
   APP --> STORE["存储层<br/>backend/store"]
   APP --> MODELS["数据模型<br/>backend/models"]
   APP --> PATHS["路径层<br/>backend/paths"]
   APP --> WS["WindsurfService<br/>登录 刷新 JWT 查询额度"]
-  APP --> SWITCH["SwitchService<br/>读写 windsurf_auth.json"]
-  APP --> PATCH["PatchService<br/>定位安装路径 / Patch / 重启 IDE"]
   APP --> MITM["MitmProxy<br/>流量接管与身份替换"]
   APP --> RELAY["OpenAIRelay<br/>OpenAI 兼容 HTTP 接口"]
+  APP --> CLASH["Clash Module<br/>IP 轮换"]
+  APP --> TASKS["TaskRegistry<br/>批量任务进度"]
 
-  SERVICE["后台服务入口<br/>service.go"] --> APP
   DESKTOP["桌面窗口入口<br/>main.go"] --> APP
 
-  SWITCH --> AUTH["windsurf_auth.json"]
   STORE --> FILES["accounts.json / settings.json"]
   MITM --> UPSTREAM["Windsurf gRPC / proto 上游接口"]
   RELAY --> MITM
@@ -69,7 +67,7 @@ graph TD
 
 可以把这个项目理解成 4 层：
 
-1. 展示层：Vue 页面、组件、Pinia stores。
+1. 展示层：React 页面、组件、Zustand stores。
 2. 调用层：Wails 自动生成绑定，前端统一通过 `APIInfo` 调 Go 方法。
 3. 编排层：`App` 和 `app_*.go`，负责把“账号、额度、切号、MITM、服务”串起来。
 4. 能力层：`backend/services`、`backend/store`、`backend/utils`，提供真正的底层能力。
@@ -80,7 +78,7 @@ graph TD
 
 ### 3.1 桌面态入口
 
-文件：[main.go](E:/windsurf切号/windsurf-tools-wails/main.go)
+文件：`main.go`
 
 桌面态会：
 
@@ -96,29 +94,16 @@ graph TD
 - 启动后会执行 `app.startup()`。
 - 前端与后端之间没有 HTTP API，直接通过 Wails 绑定通信。
 
-### 3.2 后台服务态入口
+### 3.2 静默启动与托盘运行
 
-文件：[service.go](E:/windsurf切号/windsurf-tools-wails/service.go)
+当前入口仍是 Wails 桌面态。`main.go` 支持 `--silent` / `--silent-start`，由 `App.SetSilentFromFlag` 传入运行态；托盘、窗口关闭行为和退出清理由 `tray*.go`、`app_window.go`、`app_lifecycle.go` 协同处理。
 
-如果进程不是交互式启动，或者用户显式执行：
+静默 / 托盘运行特点：
 
-- `install`
-- `uninstall`
-- `start`
-- `stop`
-- `restart`
-
-程序就会转入系统服务控制或 headless daemon 模式。
-
-headless 模式特点：
-
-- 无 WebView
-- 无托盘
 - 仍然执行 `initBackend()`
-- 可根据设置自动启动 MITM
-- 会维护后台日志与服务状态
-
-这意味着桌面版和后台版共享同一套业务逻辑，只是宿主形态不同。
+- 可按设置恢复 MITM、Relay、Clash、轮换池等运行态
+- 窗口可以隐藏到托盘，但业务组件仍在同一桌面进程内运行
+- 退出时由 `cleanupOnce` 保证 MITM 环境清理只跑一次
 
 ---
 
@@ -138,8 +123,6 @@ headless 模式特点：
   - 导入邮箱密码 / JWT / API Key / RefreshToken
 - `app_mitm.go`
   - MITM 开关、CA、Hosts、调试 dump
-- `app_patch.go`
-  - Windsurf 安装路径、补丁、恢复补丁
 - `app_quota.go`
   - 凭证刷新、额度刷新、热轮询、自动切号
 - `app_relay.go`
@@ -148,8 +131,8 @@ headless 模式特点：
   - 设置读写及副作用联动
 - `app_switch.go`
   - 手动切号、自动切号、候选选择、预热
-- `service.go`
-  - 系统服务控制、日志、状态采样
+- `app_tasks.go`
+  - 批量任务注册、进度快照与前端 TaskDrawer 轮询
 
 ### 4.2 `backend/` 目录
 
@@ -166,18 +149,18 @@ headless 模式特点：
 
 ### 4.3 `frontend/src`
 
-- `App.vue`
+- `App.tsx`
   - 主壳，切换主界面与 toolbar 模式
-- `views/Accounts.vue`
+- `views/Accounts.tsx`
   - 切号、额度刷新、导入、号池管理主界面
-- `views/Settings.vue`
-  - 自动刷新、自动切号、后台服务、Relay 等设置入口
-- `views/Relay.vue`
+- `views/Settings.tsx`
+  - 自动刷新、自动切号、MITM、Relay、Clash、调试等设置入口
+- `views/Relay.tsx`
   - OpenAI 中转界面
-- `components/MitmPanel.vue`
+- `components/MitmPanel.tsx`
   - MITM 状态、CA/Hosts 配置、开关
 - `stores/*`
-  - Pinia 状态层
+  - Zustand 状态层
 - `api/wails.ts`
   - 前端调用 Go 的统一入口
 
@@ -187,7 +170,7 @@ headless 模式特点：
 
 ### 5.1 Account
 
-文件：[backend/models/account.go](E:/windsurf切号/windsurf-tools-wails/backend/models/account.go)
+文件：`backend/models/account.go`
 
 账号模型除了基本身份信息，还包含：
 
@@ -216,7 +199,7 @@ headless 模式特点：
 
 ### 5.2 Settings
 
-文件：[backend/models/settings.go](E:/windsurf切号/windsurf-tools-wails/backend/models/settings.go)
+文件：`backend/models/settings.go`
 
 设置里真正决定系统行为的几组字段有：
 
@@ -228,19 +211,25 @@ headless 模式特点：
 - 自动切号
   - `AutoSwitchPlanFilter`
   - `AutoSwitchOnQuotaExhausted`
+  - `SwitchStrategy`
+  - `SwitchCooldownEnabled`
+  - `ManualPinEnabled`
+  - `RotationPoolEnabled`
   - `QuotaHotPollSeconds`
-  - `RestartWindsurfAfterSwitch`
 - MITM
-  - `MitmOnly`
-  - `MitmProxyEnabled`
   - `MitmDebugDump`
-  - `MitmTunMode`
-- 代理与服务
-  - `ProxyEnabled`
-  - `ProxyURL`
+  - `MitmFullCapture`
+  - `StaticCacheIntercept`
+  - `MitmJailbreakEnabled`
+  - `SmartFriendEnabled`
+- Relay / Clash / 桌面行为
   - `OpenAIRelayEnabled`
   - `OpenAIRelayPort`
   - `OpenAIRelaySecret`
+  - `ClashRotateEnabled`
+  - `MinimizeToTray`
+  - `DesktopNotifications`
+  - `WindowWidth` / `WindowHeight` / `WindowX` / `WindowY`
 
 这些字段决定了额度同步与切号逻辑的大部分分支。
 
@@ -248,7 +237,7 @@ headless 模式特点：
 
 ## 6. 存储层设计
 
-文件：[backend/store/store.go](E:/windsurf切号/windsurf-tools-wails/backend/store/store.go)
+文件：`backend/store/store.go`
 
 ### 6.1 存储形式
 
@@ -257,7 +246,7 @@ headless 模式特点：
 - `accounts.json`
 - `settings.json`
 
-目录由 [backend/paths/appdir.go](E:/windsurf切号/windsurf-tools-wails/backend/paths/appdir.go) 统一解析，默认位于用户配置目录下的 `WindsurfTools`。
+目录由 `backend/paths/appdir.go` 统一解析，默认位于用户配置目录下的 `WindsurfTools`。
 
 ### 6.2 存储特点
 
@@ -286,12 +275,13 @@ headless 模式特点：
 
 ### 7.1 前端怎么调后端
 
-文件：[frontend/src/api/wails.ts](E:/windsurf切号/windsurf-tools-wails/frontend/src/api/wails.ts)
+文件：`frontend/src/api/wails.ts`
 
 前端所有关键动作都经由 `APIInfo` 发起，例如：
 
-- `switchAccount`
-- `autoSwitchToNext`
+- `switchMitmToNext`
+- `switchMitmToAccount`
+- `switchAccountLocal`
 - `refreshAllTokens`
 - `refreshAllQuotas`
 - `refreshAccountQuota`
@@ -300,8 +290,11 @@ headless 模式特点：
 - `getMitmProxyStatus`
 - `getSettings`
 - `updateSettings`
-- `getBackgroundServiceStatus`
-- `controlBackgroundService`
+- `getOpenAIRelayStatus`
+- `getUsageSummary`
+- `listTasks`
+- `runDiagnostics`
+- `saveWindowGeometry`
 
 ### 7.2 分层特点
 
@@ -327,16 +320,22 @@ headless 模式特点：
 
 ## 8. `App` 编排层
 
-文件：[app.go](E:/windsurf切号/windsurf-tools-wails/app.go)
+文件：`app.go`
 
 `App` 是整个项目最重要的编排对象。它持有：
 
 - `store`
 - `windsurfSvc`
-- `switchSvc`
-- `patchSvc`
 - `mitmProxy`
 - `openaiRelay`
+- `rotationPool`
+- `usageTracker`
+- `notifier`
+- `pinMod`
+- `clashMod`
+- `importMod`
+- `tasks`
+- `switchHistory`
 
 并在 `initBackend()` 中完成初始化、联动与回调绑定。
 
@@ -345,16 +344,19 @@ headless 模式特点：
 1. 创建 Store
 2. 读取 Settings
 3. 创建 `WindsurfService`
-4. 创建 `SwitchService`
-5. 创建 `PatchService`
-6. 创建 `MitmProxy`
-7. 注册 MITM 的 `onKeyExhausted` 回调
-8. 创建 `OpenAIRelay`
-9. 注册 Relay 的成功回调
+4. 创建 `TaskRegistry` 与切号历史存储
+5. 创建桌面通知、Pin、UsageTracker
+6. 创建 `MitmProxy` 与 `OpenAIRelay`
+7. 注册 MITM / Relay 回调
+8. 创建导入模块与 Clash 轮换模块
+9. 把 settings 推送到 MITM、Relay、Clash、缓存、破限注入、SmartFriend 等运行态组件
 10. 根据设置启动：
    - 自动 token 刷新
    - 自动额度刷新
    - 当前会话热轮询
+   - OpenAI Relay
+   - Clash 轮换
+   - 轮换池
 
 ### 8.2 为什么它重要
 
@@ -371,7 +373,7 @@ headless 模式特点：
 
 ## 9. WindsurfService：外部接口适配层
 
-文件：[backend/services/windsurf.go](E:/windsurf切号/windsurf-tools-wails/backend/services/windsurf.go)
+文件：`backend/services/windsurf.go`
 
 这个服务负责与外部接口交互，主要能力分三类。
 
@@ -441,7 +443,7 @@ headless 模式特点：
 
 ### 10.2 定期刷新
 
-文件：[app_quota.go](E:/windsurf切号/windsurf-tools-wails/app_quota.go)
+文件：`app_quota.go`
 
 `startAutoQuotaRefresh()` 会每 5 分钟执行一次 `refreshDueQuotas()`。
 
@@ -459,7 +461,7 @@ headless 模式特点：
 
 ### 10.3 “何时该刷新”的判定
 
-文件：[backend/utils/quota_refresh.go](E:/windsurf切号/windsurf-tools-wails/backend/utils/quota_refresh.go)
+文件：`backend/utils/quota_refresh.go`
 
 支持策略：
 
@@ -484,10 +486,10 @@ headless 模式特点：
 
 热轮询流程在 `pollCurrentSessionQuotaAndMaybeSwitch()`：
 
-1. 读取当前 `windsurf_auth.json`
+1. 读取当前 MITM / 本地会话状态
 2. 判断当前监控对象是谁
-   - 普通模式优先匹配 auth
-   - `MitmOnly` 模式优先匹配当前 MITM key
+   - 优先匹配当前 MITM key
+   - 兼容文件登录态匹配
 3. 只刷新当前账号的额度
 4. 更新 Store
 5. 若额度见底，则立即切号
@@ -495,7 +497,7 @@ headless 模式特点：
 
 ### 10.5 额度数据怎么获取
 
-文件：[app_enrich.go](E:/windsurf切号/windsurf-tools-wails/app_enrich.go)
+文件：`app_enrich.go`
 
 项目有两种 enrich 路径：
 
@@ -516,7 +518,7 @@ headless 模式特点：
 
 ### 10.6 额度“见底”的统一判断
 
-文件：[backend/utils/quota_exhausted.go](E:/windsurf切号/windsurf-tools-wails/backend/utils/quota_exhausted.go)
+文件：`backend/utils/quota_exhausted.go`
 
 规则：
 
@@ -532,7 +534,7 @@ headless 模式特点：
 
 ### 10.7 “额度恢复”的本地推断
 
-文件：[app_switch.go](E:/windsurf切号/windsurf-tools-wails/app_switch.go)
+文件：`app_switch.go`
 
 `quotaDataIsStale()` 规定：
 
@@ -551,7 +553,7 @@ headless 模式特点：
 
 ## 11. 凭证同步逻辑
 
-文件：[app_quota.go](E:/windsurf切号/windsurf-tools-wails/app_quota.go)
+文件：`app_quota.go`
 
 `syncAccountCredentialsWithService()` 的优先级非常明确：
 
@@ -576,34 +578,33 @@ headless 模式特点：
 
 ---
 
-## 12. 文件切号逻辑
+## 12. 切号候选与调度逻辑
 
-文件：[app_switch.go](E:/windsurf切号/windsurf-tools-wails/app_switch.go)
+文件：`app_switch.go`、`app_mitm.go`、`app_rotation_pool.go`
 
-### 12.1 手动切号
+### 12.1 手动 MITM 切号
 
-`SwitchAccount(id)` 流程：
+`SwitchMitmToAccount(id)` 流程：
 
 1. 从 Store 取目标账号
-2. `prepareAccountForUsage()`
-3. `switchSvc.SwitchAccount()` 写入 `windsurf_auth.json`
-4. 若有 API Key，则同步 `.codeium/config.json`
-5. 同步 MITM 当前 key
-6. 异步执行 `applyPostWindsurfSwitch()`
+2. 走 `prepareAccountForUsageManual()`，允许用户明确选择的账号绕过本地额度拦截
+3. 清除该账号的冷却惩罚
+4. `switchMitmAccountAndSyncLocalSession()` 切换 MITM key 并按需同步本地会话
+5. 成功后 `setManualPin(id)`，暂停自动切换通道
 
 ### 12.2 自动切到下一席位
 
-`AutoSwitchToNext(currentID, planFilter)` 流程：
+自动轮换主要由三类入口触发：
 
-1. `orderedSwitchCandidates()` 筛出候选
-2. `prewarmCandidates()` 并行预热前几个候选
-3. 重新从 Store 读取最新状态
-4. 对每个候选执行 `prepareAccountForUsage()`
-5. 找到第一个真正可用的账号后写入 auth
+1. MITM 响应识别额度耗尽后触发 `onKeyExhausted`
+2. 当前会话热轮询发现额度见底
+3. 轮换池定时任务到期
+
+自动路径会走候选筛选、预热、实时额度校验和冷却策略；与手动切号不同，自动轮换不会写入 ManualPin。
 
 ### 12.3 候选选择策略
 
-文件：[app_switch.go](E:/windsurf切号/windsurf-tools-wails/app_switch.go)
+文件：`app_switch.go`
 
 筛选条件：
 
@@ -639,7 +640,7 @@ headless 模式特点：
 
 ## 13. `windsurf_auth.json` 写入机制
 
-文件：[backend/services/switch.go](E:/windsurf切号/windsurf-tools-wails/backend/services/switch.go)
+文件：`backend/services/switch.go`
 
 这是文件切号可靠性的关键。
 
@@ -671,7 +672,7 @@ Windows 典型路径：
 
 ## 14. MITM 无感切号逻辑
 
-文件：[backend/services/proxy.go](E:/windsurf切号/windsurf-tools-wails/backend/services/proxy.go)
+文件：`backend/services/proxy.go`
 
 这是项目另一条最核心的主链路。
 
@@ -742,21 +743,22 @@ MITM 启动前依赖：
 
 这就是 MITM 路径里“流量层发现问题，控制层回写号池”的闭环。
 
-### 14.7 MITMOnly 模式
+### 14.7 本地会话同步
 
-当 `MitmOnly=true` 时：
+当前主链路是 MITM 代理层切号，同时会在必要时同步本地 Codeium config / session：
 
-- 系统仍然同步账号额度
-- 仍然做自动轮换
-- 但不会写 `windsurf_auth.json`
+- 手动切到指定账号时会自动 Pin
+- 自动轮换不会触发 Pin
+- `shouldSyncMitmLocalSessionOnKeyChange` 决定哪些原因需要同步本地会话
+- 文件登录态链路保留为兼容入口
 
-此时切号主要发生在代理层，而不是文件层。
+因此当前切号主要发生在代理层，本地文件同步只是辅助兼容。
 
 ---
 
 ## 15. OpenAI Relay
 
-文件：[backend/services/openai_relay.go](E:/windsurf切号/windsurf-tools-wails/backend/services/openai_relay.go)
+文件：`backend/services/openai_relay.go`
 
 Relay 的定位是：
 
@@ -784,7 +786,7 @@ Relay 的定位是：
 
 ## 16. 设置变更的副作用
 
-文件：[app_settings.go](E:/windsurf切号/windsurf-tools-wails/app_settings.go)
+文件：`app_settings.go`
 
 `UpdateSettings()` 不只是保存配置，它还会联动触发真实副作用：
 
@@ -794,49 +796,44 @@ Relay 的定位是：
 - 按开关启动或停止自动额度刷新
 - 重启热轮询
 - 同步 MITM 号池
+- 同步 Forge、静态缓存、破限注入、SmartFriend、抓包 / dump 开关
+- 应用 OpenAI Relay、Clash 轮换、轮换池设置
 - 切换 debug 日志
 
 这说明 Settings 并不是“静态配置”，而是当前运行态行为控制器。
 
 ---
 
-## 17. 后台服务与诊断体系
+## 17. 诊断、日志与任务体系
 
-文件：[service.go](E:/windsurf切号/windsurf-tools-wails/service.go)
+相关文件：`app_diagnose.go`、`backend/app/diagnose`、`app_tasks.go`、`frontend/src/components/TaskDrawer.tsx`
 
-### 17.1 后台服务能力
+### 17.1 平台诊断
 
-支持：
+`RunDiagnostics()` 会聚合平台能力检查：
 
-- 安装服务
-- 卸载服务
-- 启动服务
-- 停止服务
-- 重启服务
+- 桌面通知
+- 文件管理器打开能力
+- 提权能力
+- CA 证书工具
+- 应用数据目录可写性
+- Windsurf 安装路径
+- Clash 控制器
+- Windows WebView2
 
-### 17.2 日志体系
+这些结果会在 Dashboard 里以可读的修复提示展示。
 
-维护两类日志：
+### 17.2 调试日志
 
-- `desktop-runtime.log`
-- `background-service.log`
+调试日志由 `utils.InitDebugLogger` 控制：
 
-并支持：
+- UI 的「调试日志」开关写入 `settings.DebugLog`
+- `WINDSURF_TOOLS_DEBUG_STDOUT=1` 可在开发时强制输出到 stderr
+- 日志文件写入应用数据目录的 `debug.log`
 
-- 自动轮转
-- 最近日志裁剪
-- 错误摘要
-- 前端状态展示
+### 17.3 任务进度
 
-### 17.3 前端如何看服务状态
-
-前端设置页会调用：
-
-- `GetBackgroundServiceStatus()`
-- `GetDesktopRuntimeStatus()`
-- `ControlBackgroundService()`
-
-这让 GUI 可以直接操控与观察后台 daemon。
+`TaskRegistry` 负责批量导入、批量刷新等长任务的运行态快照。前端 `TaskDrawer` 周期性拉取任务列表，展示进度、成功 / 失败计数和最近错误。
 
 ---
 
@@ -844,7 +841,7 @@ Relay 的定位是：
 
 ### 18.1 Accounts 页面
 
-文件：[frontend/src/views/Accounts.vue](E:/windsurf切号/windsurf-tools-wails/frontend/src/views/Accounts.vue)
+文件：`frontend/src/views/Accounts.tsx`
 
 负责：
 
@@ -857,19 +854,19 @@ Relay 的定位是：
 
 ### 18.2 Settings 页面
 
-文件：[frontend/src/views/Settings.vue](E:/windsurf切号/windsurf-tools-wails/frontend/src/views/Settings.vue)
+文件：`frontend/src/views/Settings.tsx`
 
 负责：
 
 - 自动刷新策略
 - 自动切号策略
-- MITMOnly / 热轮询 / 自动重启等行为控制
-- 后台服务安装与控制
-- Relay 开关
+- 热轮询、Manual Pin、轮换池等行为控制
+- MITM / 抓包 / 静态缓存 / 破限注入
+- Relay、Clash、调试日志、窗口与托盘偏好
 
 ### 18.3 MITM 面板
 
-文件：[frontend/src/components/MitmPanel.vue](E:/windsurf切号/windsurf-tools-wails/frontend/src/components/MitmPanel.vue)
+文件：`frontend/src/components/MitmPanel.tsx`
 
 负责：
 
@@ -881,7 +878,7 @@ Relay 的定位是：
 
 ### 18.4 Relay 页面
 
-文件：[frontend/src/views/Relay.vue](E:/windsurf切号/windsurf-tools-wails/frontend/src/views/Relay.vue)
+文件：`frontend/src/views/Relay.tsx`
 
 负责：
 
@@ -893,24 +890,22 @@ Relay 的定位是：
 
 ## 19. 关键时序
 
-### 19.1 手动切号时序
+### 19.1 手动 MITM 切号时序
 
 ```mermaid
 sequenceDiagram
-  participant UI as Accounts.vue
-  participant App as App.SwitchAccount
-  participant Prep as prepareAccountForUsage
-  participant Sw as SwitchService
+  participant UI as Accounts.tsx
+  participant App as App.SwitchMitmToAccount
+  participant Prep as prepareAccountForUsageManual
   participant Mitm as MitmProxy
-  participant Patch as PatchService
+  participant Pin as Pin Module
 
-  UI->>App: switchAccount(id)
+  UI->>App: switchMitmToAccount(id)
   App->>Prep: prepare target account
-  Prep-->>App: token + quota verified
-  App->>Sw: write windsurf_auth.json
+  Prep-->>App: credential ready
   App->>Mitm: SwitchToKey(apiKey)
-  App->>App: InjectCodeiumConfig(apiKey)
-  App->>Patch: optional restart Windsurf
+  App->>App: sync local session if needed
+  App->>Pin: setManualPin(id)
   App-->>UI: success
 ```
 
@@ -962,9 +957,9 @@ sequenceDiagram
 ## 20. 当前架构的优点
 
 - 前后端边界清晰，Go 真正掌控业务
-- 文件切号与 MITM 切号双链路并存，适应性强
+- MITM 切号是主链路，文件登录态同步作为兼容链路保留
 - 额度同步和切号逻辑已经形成闭环
-- 后台服务与桌面版共用同一后端逻辑，维护成本较低
+- 诊断、任务进度、通知、窗口记忆等桌面控制面能力已形成闭环
 - Relay 复用现有号池能力，没有重复造轮子
 
 ---
@@ -979,7 +974,7 @@ sequenceDiagram
   - MITM 回调
   - 设置副作用
   - Relay 联动
-  - 服务控制边界
+  - Clash / Pin / RotationPool / Task 联动
 
 这会带来两个问题：
 
@@ -1006,12 +1001,12 @@ sequenceDiagram
 
 之间的隐式耦合。
 
-### 22.2 第二优先级：统一“当前账号解析”
+### 22.2 第二优先级：统一“当前会话解析”
 
-现在“当前是谁”有两套入口：
+现在“当前是谁”主要有两类信号：
 
-- `windsurf_auth.json`
 - MITM 当前 key
+- 兼容链路中的本地登录态 / Codeium config
 
 建议抽出统一的 `CurrentSessionResolver`，避免后面更多地方重复做：
 
@@ -1059,14 +1054,14 @@ sequenceDiagram
 
 - `Store` 保存账号池与策略
 - `WindsurfService` 负责外部接口交互
-- `SwitchService` 负责显式文件切号
-- `MitmProxy` 负责无感流量切号
+- `MitmProxy` 负责无感流量切号与运行态 key 轮换
+- `SwitchService` 保留为本地登录态兼容链路
 - `OpenAIRelay` 复用号池做协议转发
 - `App` 负责把这些模块编排成一个可运行闭环
 
 其中最关键的两条业务主线是：
 
 - 额度同步 / 额度恢复推断
-- 文件切号 / MITM 无感切号
+- MITM 无感切号 / 本地会话同步
 
 后续如果继续演进，最值得投入的不是重写协议层，而是继续拆分策略层与会话判定层，让当前已经比较完整的功能体系更易维护、更易扩展。

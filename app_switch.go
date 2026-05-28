@@ -85,17 +85,24 @@ func accountEligibleForUsage(acc *models.Account, planFilter string, requireAPIK
 }
 
 func orderedSwitchCandidates(accounts []models.Account, currentID string, planFilter string, bypassQuota bool) []models.Account {
+	return orderedSwitchCandidatesWithSettings(accounts, currentID, planFilter, bypassQuota, models.Settings{})
+}
+
+// orderedSwitchCandidatesWithSettings —— F3: 接 settings 让调度策略 + 冷却生效
+func orderedSwitchCandidatesWithSettings(accounts []models.Account, currentID string, planFilter string, bypassQuota bool, s models.Settings) []models.Account {
 	var fresh, stale []models.Account
 	for _, acc := range accounts {
 		if acc.ID == currentID {
+			continue
+		}
+		// F3: 冷却中的账号跳过自动选择
+		if s.SwitchCooldownEnabled && switchCooldown.isInCooldown(acc.ID) {
 			continue
 		}
 		if accountEligibleForUsage(&acc, planFilter, false, bypassQuota) {
 			fresh = append(fresh, acc)
 			continue
 		}
-		// 额度数据过期的账号也纳入候选（额度可能已重置），预热阶段会刷新。
-		// SmartFriend bypass 时已通过 fresh 全量纳入，无需再走 stale 分支。
 		if !bypassQuota && quotaDataIsStale(&acc) && hasSwitchCredentials(&acc) && utils.PlanFilterMatch(planFilter, acc.PlanName) {
 			status := strings.TrimSpace(strings.ToLower(acc.Status))
 			if status != "disabled" && status != "expired" {
@@ -109,7 +116,9 @@ func orderedSwitchCandidates(accounts []models.Account, currentID string, planFi
 	sort.SliceStable(stale, func(i, j int) bool {
 		return switchCredentialPriority(stale[i]) < switchCredentialPriority(stale[j])
 	})
-	// 新鲜的优先，过期数据的排后面
+	// F3: 应用调度策略（priority / balanced）；fcfs / 空字符串保留原行为
+	fresh = applySchedStrategy(fresh, s.SwitchStrategy)
+	stale = applySchedStrategy(stale, s.SwitchStrategy)
 	return append(fresh, stale...)
 }
 
@@ -158,17 +167,23 @@ func intersectByID(source []models.Account, idsAllowed []string) []models.Accoun
 }
 
 func orderedMitmCandidates(accounts []models.Account, currentID string, planFilter string, bypassQuota bool) []models.Account {
+	return orderedMitmCandidatesWithSettings(accounts, currentID, planFilter, bypassQuota, models.Settings{})
+}
+
+func orderedMitmCandidatesWithSettings(accounts []models.Account, currentID string, planFilter string, bypassQuota bool, s models.Settings) []models.Account {
 	var fresh, stale []models.Account
 	for _, acc := range accounts {
 		if acc.ID == currentID {
+			continue
+		}
+		// F3: 冷却中的账号跳过
+		if s.SwitchCooldownEnabled && switchCooldown.isInCooldown(acc.ID) {
 			continue
 		}
 		if accountEligibleForUsage(&acc, planFilter, true, bypassQuota) {
 			fresh = append(fresh, acc)
 			continue
 		}
-		// SmartFriend bypass 已经把所有非 disabled/expired 的耗尽账号纳入 fresh，
-		// 这里只在非 bypass 时补充「数据过期可能已重置」的候选。
 		if !bypassQuota && quotaDataIsStale(&acc) && hasSwitchCredentials(&acc) && utils.PlanFilterMatch(planFilter, acc.PlanName) &&
 			strings.TrimSpace(acc.WindsurfAPIKey) != "" {
 			status := strings.TrimSpace(strings.ToLower(acc.Status))
@@ -183,6 +198,8 @@ func orderedMitmCandidates(accounts []models.Account, currentID string, planFilt
 	sort.SliceStable(stale, func(i, j int) bool {
 		return switchCredentialPriority(stale[i]) < switchCredentialPriority(stale[j])
 	})
+	fresh = applySchedStrategy(fresh, s.SwitchStrategy)
+	stale = applySchedStrategy(stale, s.SwitchStrategy)
 	return append(fresh, stale...)
 }
 
@@ -286,10 +303,10 @@ func (a *App) prepareAccount(acc models.Account, allowExhausted bool) (models.Ac
 
 func (a *App) rotateMitmToNextAvailable(currentID string, planFilter string) (models.Account, error) {
 	bypassQuota := a.shouldBypassQuotaCheck()
-	candidates := orderedMitmCandidates(a.store.GetAllAccounts(), currentID, planFilter, bypassQuota)
+	settings := a.store.GetSettings()
+	candidates := orderedMitmCandidatesWithSettings(a.store.GetAllAccounts(), currentID, planFilter, bypassQuota, settings)
 	// ★ Rotation Pool 启用时把候选收窄到池内成员。池外账号完全不参与
 	// 自动轮换 —— 这是用户「选这几个号来回切」的明确意图。
-	settings := a.store.GetSettings()
 	if settings.RotationPoolEnabled && len(settings.RotationPoolAccountIDs) > 0 {
 		candidates = intersectByID(candidates, settings.RotationPoolAccountIDs)
 		utils.DLog("[切号] rotateMitm: RotationPool 启用，候选收窄到池内 %d 个", len(candidates))
@@ -304,7 +321,7 @@ func (a *App) rotateMitmToNextAvailable(currentID string, planFilter string) (mo
 	a.prewarmCandidates(candidates, 2)
 
 	// 预热后重读 store，仅保留仍有额度的（SmartFriend 时全员保留）
-	freshCandidates := orderedMitmCandidates(a.store.GetAllAccounts(), currentID, planFilter, bypassQuota)
+	freshCandidates := orderedMitmCandidatesWithSettings(a.store.GetAllAccounts(), currentID, planFilter, bypassQuota, settings)
 	if settings.RotationPoolEnabled && len(settings.RotationPoolAccountIDs) > 0 {
 		freshCandidates = intersectByID(freshCandidates, settings.RotationPoolAccountIDs)
 	}

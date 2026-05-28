@@ -93,6 +93,19 @@ type accountRefreshOutcome struct {
 }
 
 func runAccountRefreshBatches(accounts []models.Account, concurrency int, pause time.Duration, worker func(models.Account) accountRefreshOutcome) []accountRefreshOutcome {
+	return runAccountRefreshBatchesWithProgress(accounts, concurrency, pause, worker, nil)
+}
+
+// runAccountRefreshBatchesWithProgress 与 runAccountRefreshBatches 一致，但额外接受
+// onItem 回调 —— 在每个 worker 完成（且 mutex 内安全可读）时调用一次，用于
+// F1: TaskRegistry 实时推进度。onItem 必须线程安全（worker 是并发跑的）。
+func runAccountRefreshBatchesWithProgress(
+	accounts []models.Account,
+	concurrency int,
+	pause time.Duration,
+	worker func(models.Account) accountRefreshOutcome,
+	onItem func(outcome accountRefreshOutcome),
+) []accountRefreshOutcome {
 	if len(accounts) == 0 {
 		return nil
 	}
@@ -112,7 +125,11 @@ func runAccountRefreshBatches(accounts []models.Account, concurrency int, pause 
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				results[i] = worker(acc)
+				r := worker(acc)
+				results[i] = r
+				if onItem != nil {
+					onItem(r)
+				}
 			}()
 		}
 		wg.Wait()
@@ -503,9 +520,15 @@ func (a *App) refreshAllTokens() map[string]string {
 		}
 		return results
 	}
+	// F1: 注册批量任务
+	var taskID string
+	if a.tasks != nil && len(accounts) > 0 {
+		taskID = a.tasks.Start("refresh_tokens", fmt.Sprintf("全量刷新 Token (%d)", len(accounts)), len(accounts))
+		defer a.tasks.Finish(taskID)
+	}
 	pause := refreshBatchPause(settings.ConcurrentLimit)
 	updatedPool := false
-	outcomes := runAccountRefreshBatches(accounts, settings.ConcurrentLimit, pause, func(acc models.Account) accountRefreshOutcome {
+	outcomes := runAccountRefreshBatchesWithProgress(accounts, settings.ConcurrentLimit, pause, func(acc models.Account) accountRefreshOutcome {
 		label := labelAccountResult(acc)
 		if acc.WindsurfAPIKey != "" {
 			jwt, err := svc.GetJWTByAPIKey(acc.WindsurfAPIKey)
@@ -537,6 +560,12 @@ func (a *App) refreshAllTokens() map[string]string {
 			return accountRefreshOutcome{label: label, status: "Token刷新成功", account: acc, updated: true}
 		}
 		return accountRefreshOutcome{label: label, status: "无可用刷新凭证"}
+	}, func(o accountRefreshOutcome) {
+		if a.tasks == nil || taskID == "" {
+			return
+		}
+		ok := strings.Contains(o.status, "成功")
+		a.tasks.Add(taskID, o.label, ok, o.status)
 	})
 	for _, outcome := range outcomes {
 		results[outcome.label] = outcome.status
@@ -598,9 +627,15 @@ func (a *App) RefreshAllQuotas() map[string]string {
 		}
 		return results
 	}
+	// F1: 注册批量任务
+	var taskID string
+	if a.tasks != nil && len(accounts) > 0 {
+		taskID = a.tasks.Start("refresh_quotas", fmt.Sprintf("全量同步额度 (%d)", len(accounts)), len(accounts))
+		defer a.tasks.Finish(taskID)
+	}
 	pause := refreshBatchPause(settings.ConcurrentLimit)
 	updatedPool := false
-	outcomes := runAccountRefreshBatches(accounts, settings.ConcurrentLimit, pause, func(acc models.Account) accountRefreshOutcome {
+	outcomes := runAccountRefreshBatchesWithProgress(accounts, settings.ConcurrentLimit, pause, func(acc models.Account) accountRefreshOutcome {
 		label := labelAccountResult(acc)
 		if acc.WindsurfAPIKey == "" && acc.Token == "" && acc.RefreshToken == "" && (acc.Email == "" || acc.Password == "") {
 			return accountRefreshOutcome{label: label, status: "跳过：无可用凭证"}
@@ -615,6 +650,12 @@ func (a *App) RefreshAllQuotas() map[string]string {
 			status = "额度同步失败（API返回为空）"
 		}
 		return accountRefreshOutcome{label: label, status: status, account: copyAcc, updated: true}
+	}, func(o accountRefreshOutcome) {
+		if a.tasks == nil || taskID == "" {
+			return
+		}
+		ok := strings.Contains(o.status, "已同步")
+		a.tasks.Add(taskID, o.label, ok, o.status)
 	})
 	for _, outcome := range outcomes {
 		results[outcome.label] = outcome.status

@@ -843,7 +843,9 @@ type protoField struct {
 type protoMessage []protoField
 
 func decodeProtoMessage(data []byte) protoMessage {
-	fields := make(protoMessage, 0)
+	// ★ 性能：流式 chat response chunk 顶层字段通常 5-10 个，cap=8 避免
+	// 1-2 次扩容（每次 chunk 都调，累积可观）。
+	fields := make(protoMessage, 0, 8)
 	pos := 0
 	for pos < len(data) {
 		tag, next, ok := utils.ReadVarintSimple(data, pos)

@@ -422,9 +422,9 @@ func TestStreamResponse_HandlesCompressedConnectFrames(t *testing.T) {
 	secondPayload := encodeBytesField(6, encodeBytesField(3, []byte("world")))
 
 	var stream []byte
-	stream = append(stream, appendStreamEnvelope(nil, streamEnvelopeCompressed, gzipBytes(t, firstPayload))...)
-	stream = append(stream, appendStreamEnvelope(nil, streamEnvelopeCompressed, gzipBytes(t, secondPayload))...)
-	stream = append(stream, appendStreamEnvelope(nil, streamEnvelopeCompressed|streamEnvelopeEndStream, gzipBytes(t, []byte(`{}`)))...)
+	stream = append(stream, appendStreamEnvelope(nil, streamEnvelopeCompressed, gzipBytesForTest(t, firstPayload))...)
+	stream = append(stream, appendStreamEnvelope(nil, streamEnvelopeCompressed, gzipBytesForTest(t, secondPayload))...)
+	stream = append(stream, appendStreamEnvelope(nil, streamEnvelopeCompressed|streamEnvelopeEndStream, gzipBytesForTest(t, []byte(`{}`)))...)
 
 	body := io.NopCloser(strings.NewReader(string(stream)))
 	w := httptest.NewRecorder()
