@@ -26,8 +26,10 @@ func usDateNewYork(t time.Time) string {
 	return t.In(loc).Format("2006-01-02")
 }
 
-func localCalendarDate(t time.Time) string {
-	return t.Local().Format("2006-01-02")
+// localCalendarDate 按指定时区取日历日期。生产中传入 now.Location()（即 time.Local），
+// 不依赖进程全局 TZ，使本机日历跨日判断在任意 runner/时区下都确定。
+func localCalendarDate(t time.Time, loc *time.Location) string {
+	return t.In(loc).Format("2006-01-02")
 }
 
 // ClampQuotaCustomIntervalMinutes 自定义同步间隔（分钟）：未设置或非法时用默认 360；最小 5，最大 7 天
@@ -61,7 +63,9 @@ func QuotaRefreshDue(lastQuotaUpdateISO, policy string, customIntervalMinutes in
 	case QuotaPolicyUSCalendar:
 		return usDateNewYork(last) < usDateNewYork(now)
 	case QuotaPolicyLocalCalendar:
-		return localCalendarDate(last) < localCalendarDate(now)
+		// 以 now 的时区为准，跨日历日则到期；last 也换算到同一时区比较。
+		loc := now.Location()
+		return localCalendarDate(last, loc) < localCalendarDate(now, loc)
 	case QuotaPolicyInterval1h:
 		return now.Sub(last) >= time.Hour
 	case QuotaPolicyInterval6h:
