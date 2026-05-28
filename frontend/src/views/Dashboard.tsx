@@ -29,7 +29,10 @@ import { useAccountStore } from "../stores/useAccountStore";
 import { useMainViewStore } from "../stores/useMainViewStore";
 import { useMitmStatusStore } from "../stores/useMitmStatusStore";
 import { useRelayStatusStore } from "../stores/useRelayStatusStore";
+import { useSettingsStore } from "../stores/useSettingsStore";
+import { useProviderAccountStore } from "../stores/useProviderAccountStore";
 import { useMergedTasks, useTaskStore, type Task } from "../stores/useTaskStore";
+import { PROVIDER_DISPLAY_ORDER, PROVIDER_META, type ProviderID } from "../utils/provider";
 import {
   getAccountHealth,
   isWeeklyQuotaBlocked,
@@ -842,6 +845,9 @@ export default function Dashboard() {
         {/* F2: 切号历史趋势卡（24h 折线 + 原因分布 + Top 账号） */}
         <DashboardMetrics />
 
+        {/* ★ 提供商汇总(仅 routeMode=providers 时显示) */}
+        <ProviderRouteOverview />
+
         {/* 主区 grid: MitmPanel | (onboarding + actions + warning) */}
         <section className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.25fr)_360px]">
           <div ref={mitmPanelRef} className="min-w-0">
@@ -1244,5 +1250,117 @@ export default function Dashboard() {
         </div>
       ) : null}
     </SkeletonOverlay>
+  );
+}
+
+// ── 子组件：提供商概览（仅 routeMode=providers 时显示） ──
+
+interface ProviderBucket {
+  id: ProviderID;
+  label: string;
+  badge: string;
+  accent: string;
+  total: number;
+  ready: number;
+}
+
+function ProviderRouteOverview() {
+  const settings = useSettingsStore((s) => s.settings);
+  const setActiveTab = useMainViewStore((s) => s.setActiveTab);
+  const accounts = useProviderAccountStore((s) => s.accounts);
+  const ensureAccountsLoaded = useProviderAccountStore((s) => s.ensureAccountsLoaded);
+
+  const routeMode: 'pool' | 'providers' =
+    (settings as any)?.mitm_route_mode === 'providers' ? 'providers' : 'pool';
+
+  useEffect(() => {
+    if (routeMode === 'providers') {
+      void ensureAccountsLoaded();
+    }
+  }, [routeMode, ensureAccountsLoaded]);
+
+  const buckets = useMemo<ProviderBucket[]>(() => {
+    const map = new Map<ProviderID, { total: number; ready: number }>();
+    for (const id of PROVIDER_DISPLAY_ORDER) {
+      map.set(id, { total: 0, ready: 0 });
+    }
+    for (const acc of accounts) {
+      const provider = String(acc.provider || '').toLowerCase() as ProviderID;
+      const bucket = map.get(provider);
+      if (!bucket) continue;
+      bucket.total++;
+      const hasToken = Boolean(String(acc.auth_token || '').trim());
+      const active = String(acc.status || 'active') !== 'disabled';
+      if (hasToken && active) bucket.ready++;
+    }
+    return PROVIDER_DISPLAY_ORDER.map((id) => {
+      const meta = PROVIDER_META[id];
+      const stat = map.get(id) ?? { total: 0, ready: 0 };
+      return { id, label: meta.label, badge: meta.badge, accent: meta.accent, total: stat.total, ready: stat.ready };
+    });
+  }, [accounts]);
+
+  const total = buckets.reduce((s, b) => s + b.total, 0);
+  const ready = buckets.reduce((s, b) => s + b.ready, 0);
+  const visible = buckets.filter((b) => b.total > 0);
+  const goProviders = () => setActiveTab('Providers');
+
+  if (routeMode !== 'providers') return null;
+
+  return (
+    <section className="ios-glass overflow-hidden rounded-[28px] border border-black/[0.05] dark:border-white/[0.06]">
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-black/[0.04] px-6 py-4 dark:border-white/[0.06]">
+        <div>
+          <h2 className="text-[16px] font-bold text-ios-text dark:text-ios-textDark">
+            提供商概览
+          </h2>
+          <p className="mt-1 text-[12px] text-ios-textSecondary dark:text-ios-textSecondaryDark">
+            已切到「提供商」接管 — IDE chat 请求被 MITM 翻译给已激活的卡片 ({ready} / {total} 可用)。
+            <span className="text-amber-700 dark:text-amber-300 font-semibold">
+              {' '}需要至少 1 张激活卡 + 设了 active_model 才能跑通。
+            </span>
+          </p>
+        </div>
+        <button
+          type="button"
+          className="no-drag-region inline-flex items-center gap-1.5 rounded-full bg-black/[0.04] px-3 py-1.5 text-[12px] font-bold text-ios-text dark:bg-white/[0.06] dark:text-ios-textDark hover:bg-black/[0.08] dark:hover:bg-white/[0.1] ios-btn"
+          onClick={goProviders}
+        >
+          管理提供商 →
+        </button>
+      </header>
+
+      {total === 0 ? (
+        <div className="px-6 py-8 text-center text-[13px] text-ios-textSecondary dark:text-ios-textSecondaryDark">
+          号池里还没有提供商账号 —
+          <button
+            type="button"
+            className="ml-1 font-semibold text-ios-blue ios-btn"
+            onClick={goProviders}
+          >
+            前往「提供商」批量导入
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-3 p-6 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+          {visible.map((bucket) => (
+            <article
+              key={bucket.id}
+              className="rounded-[18px] border border-black/[0.05] bg-white/80 p-4 shadow-sm dark:border-white/[0.06] dark:bg-white/[0.04]"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] ${bucket.badge}`}>
+                  {bucket.label}
+                </span>
+                <span className="rounded-full bg-black/[0.05] px-2 py-0.5 text-[10px] font-mono font-bold text-ios-textSecondary dark:bg-white/[0.08]">
+                  {bucket.ready}/{bucket.total}
+                </span>
+              </div>
+              <div className={`mt-3 h-1 rounded-full bg-gradient-to-r ${bucket.accent}`} />
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }

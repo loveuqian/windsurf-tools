@@ -24,6 +24,7 @@ import {
 } from "./utils/appMode";
 import Dashboard from "./views/Dashboard";
 import Accounts from "./views/Accounts";
+import Providers from "./views/Providers";
 import Settings from "./views/Settings";
 import Usage from "./views/Usage";
 import Relay from "./views/Relay";
@@ -34,6 +35,7 @@ import About from "./views/About";
 const VIEW_REGISTRY: Record<ShellViewTab, ComponentType> = {
   Dashboard,
   Accounts,
+  Providers,
   Settings,
   Usage,
   Relay,

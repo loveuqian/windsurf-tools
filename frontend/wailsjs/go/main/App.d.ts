@@ -64,6 +64,12 @@ export function GetMitmFullCaptureEnabled():Promise<boolean>;
 
 export function GetMitmProxyStatus():Promise<services.MitmProxyStatus>;
 
+export function GetTasks():Promise<Array<main.Task>>;
+
+export function ClearFinishedTasks():Promise<void>;
+
+export function GetDashboardMetrics():Promise<main.DashboardMetrics>;
+
 export function GetMitmSessionBindings():Promise<Array<services.SessionBindingInfo>>;
 
 export function GetOpenAIRelayStatus():Promise<services.OpenAIRelayStatus>;

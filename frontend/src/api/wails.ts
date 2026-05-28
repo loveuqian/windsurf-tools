@@ -30,6 +30,19 @@ export const APIInfo = {
   importByRefreshToken: AppHooks.ImportByRefreshToken,
   addSingleAccount: AppHooks.AddSingleAccount,
 
+  // ── 第三方提供商账号(OpenAI / Anthropic / DeepSeek / ...) ──
+  // 与号池物理隔离：独立 store 文件 provider_accounts.json
+  importByProvider: (AppHooks as any).ImportByProvider as (
+    items: Array<{ provider: string; base_url: string; token: string; remark?: string; nickname?: string }>,
+  ) => Promise<ImportResult[]>,
+  getAllProviderAccounts: (AppHooks as any).GetAllProviderAccounts as () => Promise<any[]>,
+  getProviderAccount: (AppHooks as any).GetProviderAccount as (id: string) => Promise<any>,
+  updateProviderAccount: (AppHooks as any).UpdateProviderAccount as (acc: any) => Promise<void>,
+  deleteProviderAccount: (AppHooks as any).DeleteProviderAccount as (id: string) => Promise<void>,
+  refreshProviderModels: (AppHooks as any).RefreshProviderModels as (id: string) => Promise<void>,
+  nextActiveAccount: (AppHooks as any).NextActiveAccount as () => Promise<any>,
+  getActiveAccount: (AppHooks as any).GetActiveAccount as () => Promise<any>,
+
   refreshAllTokens: AppHooks.RefreshAllTokens,
   refreshAllQuotas: AppHooks.RefreshAllQuotas,
   refreshAccountQuota: AppHooks.RefreshAccountQuota,

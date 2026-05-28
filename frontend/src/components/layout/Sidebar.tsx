@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Activity,
   BookOpen,
@@ -6,6 +6,7 @@ import {
   HardDriveDownload,
   Hash,
   Heart,
+  Layers,
   LayoutDashboard,
   MessageSquare,
   Plus,
@@ -17,6 +18,8 @@ import {
 import { useAccountStore } from "../../stores/useAccountStore";
 import { useMainViewStore } from "../../stores/useMainViewStore";
 import { useMitmStatusStore } from "../../stores/useMitmStatusStore";
+import { useSettingsStore } from "../../stores/useSettingsStore";
+import { showErrorToast, showToast } from "../../utils/toast";
 import { PRIMARY_POOL_LABEL, type ShellViewTab } from "../../utils/appMode";
 
 interface MenuItem {
@@ -28,6 +31,7 @@ interface MenuItem {
 const MENU_ITEMS: MenuItem[] = [
   { id: "Dashboard", icon: LayoutDashboard, label: "总览" },
   { id: "Accounts", icon: Users, label: PRIMARY_POOL_LABEL },
+  { id: "Providers", icon: Layers, label: "提供商" },
   { id: "Usage", icon: Activity, label: "用量统计" },
   { id: "Relay", icon: Globe, label: "OpenAI Relay" },
   { id: "Cleanup", icon: HardDriveDownload, label: "清理优化" },
@@ -44,6 +48,30 @@ export default function Sidebar() {
 
   const accounts = useAccountStore((s) => s.accounts);
   const status = useMitmStatusStore((s) => s.status);
+  const settings = useSettingsStore((s) => s.settings);
+  const updateSettings = useSettingsStore((s) => s.updateSettings);
+
+  // ── 路由模式胶囊：号池 ↔ 提供商 ──
+  const routeMode: 'pool' | 'providers' =
+    (settings as any)?.mitm_route_mode === 'providers' ? 'providers' : 'pool';
+  const [switchingRouteMode, setSwitchingRouteMode] = useState(false);
+  const setRouteMode = async (target: 'pool' | 'providers') => {
+    if (routeMode === target || switchingRouteMode || !settings) return;
+    setSwitchingRouteMode(true);
+    try {
+      await updateSettings({ ...settings, mitm_route_mode: target } as any);
+      showToast(
+        target === 'providers'
+          ? '已切到提供商: MITM chat 走已激活卡片'
+          : '已切回 Windsurf 号池接管',
+        'success',
+      );
+    } catch (e: unknown) {
+      showErrorToast(e, '切换路由模式失败');
+    } finally {
+      setSwitchingRouteMode(false);
+    }
+  };
 
   const activeKey = useMemo(
     () => status?.pool_status?.find((item) => item.is_current) ?? null,
@@ -209,6 +237,50 @@ export default function Sidebar() {
             健康 {healthyCount} / {totalCount}
           </div>
         )}
+
+        {/* ★ 路由模式胶囊：号池 ↔ 提供商(iOS 风滑动指示条) */}
+        <div
+          className="no-drag-region relative mt-2 flex items-stretch rounded-full border border-black/[0.06] bg-white/80 p-0.5 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.05]"
+          role="tablist"
+        >
+          <span
+            className={`absolute top-0.5 bottom-0.5 left-0.5 rounded-full shadow-md transition-[transform,background-image,box-shadow] duration-[420ms] ease-[cubic-bezier(0.25,1,0.5,1)] ${
+              routeMode === 'providers'
+                ? 'bg-gradient-to-b from-violet-500 via-fuchsia-400 to-rose-300 shadow-fuchsia-500/25'
+                : 'bg-gradient-to-b from-[#3b82f6] to-ios-blue shadow-ios-blue/25'
+            }`}
+            style={{
+              width: 'calc(50% - 2px)',
+              transform: routeMode === 'providers' ? 'translateX(calc(100% + 0px))' : 'translateX(0)',
+            }}
+          />
+          <button
+            type="button"
+            className={`ios-btn relative z-10 flex-1 flex h-7 items-center justify-center gap-1 rounded-full text-[11px] font-bold transition-colors duration-200 ${
+              routeMode === 'pool'
+                ? 'text-white'
+                : 'text-ios-textSecondary hover:text-ios-text dark:text-ios-textSecondaryDark dark:hover:text-ios-textDark'
+            }`}
+            disabled={switchingRouteMode}
+            onClick={() => setRouteMode('pool')}
+          >
+            <Users className="h-3 w-3" strokeWidth={2.6} />
+            号池
+          </button>
+          <button
+            type="button"
+            className={`ios-btn relative z-10 flex-1 flex h-7 items-center justify-center gap-1 rounded-full text-[11px] font-bold transition-colors duration-200 ${
+              routeMode === 'providers'
+                ? 'text-white'
+                : 'text-ios-textSecondary hover:text-ios-text dark:text-ios-textSecondaryDark dark:hover:text-ios-textDark'
+            }`}
+            disabled={switchingRouteMode}
+            onClick={() => setRouteMode('providers')}
+          >
+            <Globe className="h-3 w-3" strokeWidth={2.6} />
+            提供商
+          </button>
+        </div>
       </div>
 
       <div className="mx-3 mt-3 flex gap-2">

@@ -121,6 +121,18 @@ export function GetMitmProxyStatus() {
   return window['go']['main']['App']['GetMitmProxyStatus']();
 }
 
+export function GetTasks() {
+  return window['go']['main']['App']['GetTasks']();
+}
+
+export function ClearFinishedTasks() {
+  return window['go']['main']['App']['ClearFinishedTasks']();
+}
+
+export function GetDashboardMetrics() {
+  return window['go']['main']['App']['GetDashboardMetrics']();
+}
+
 export function GetMitmSessionBindings() {
   return window['go']['main']['App']['GetMitmSessionBindings']();
 }
