@@ -1,0 +1,17 @@
+# 默认:所有文本文件入库用 LF 行尾
+# 修复 Windows core.autocrlf=true 导致的 EOL 翻转污染
+* text=auto eol=lf
+
+# Shell 脚本必须 LF(macOS/Linux 直接执行)
+*.sh text eol=lf
+
+# 二进制文件不做行尾/编码转换
+*.png binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
