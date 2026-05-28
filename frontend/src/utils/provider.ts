@@ -342,12 +342,18 @@ export function parseProviderLine(line: string, provider: ProviderID): ProviderL
     }
   }
   const patterns = TOKEN_PATTERNS[provider] ?? []
+  // 不再硬拦 token 形态 —— 第三方中转(one-api 等)发的兼容 key 常常没有 sk-/AIza
+  // 这类前缀,旧逻辑把合法 key 挡在外面。这里只做"非空"硬校验,前缀仅作软提示;
+  // 真正不合法的 token 上游鉴权时会拒。
   if (patterns.length > 0 && !patterns.some((re) => re.test(token))) {
-    return {
-      ok: false,
-      baseUrl,
-      token,
-      error: `token 不符合 ${PROVIDER_META[provider].label} 形态(期望前缀:${PROVIDER_META[provider].credentialKinds.join(' / ')})`,
+    // 仅在 token 含明显非法字符(空白)时才拒,否则放行
+    if (/\s/.test(token)) {
+      return {
+        ok: false,
+        baseUrl,
+        token,
+        error: `token 不应包含空格`,
+      }
     }
   }
   return { ok: true, baseUrl, token, error: '' }

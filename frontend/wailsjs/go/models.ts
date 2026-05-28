@@ -606,6 +606,8 @@ export namespace models {
 	    weekly_remaining: string;
 	    daily_reset_at: string;
 	    weekly_reset_at: string;
+	    extra_usage_balance_micros: number;
+	    has_extra_usage_balance: boolean;
 	    subscription_expires_at: string;
 	    token_expires_at: string;
 	    status: string;
@@ -635,6 +637,8 @@ export namespace models {
 	        this.weekly_remaining = source["weekly_remaining"];
 	        this.daily_reset_at = source["daily_reset_at"];
 	        this.weekly_reset_at = source["weekly_reset_at"];
+	        this.extra_usage_balance_micros = source["extra_usage_balance_micros"];
+	        this.has_extra_usage_balance = source["has_extra_usage_balance"];
 	        this.subscription_expires_at = source["subscription_expires_at"];
 	        this.token_expires_at = source["token_expires_at"];
 	        this.status = source["status"];

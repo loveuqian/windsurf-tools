@@ -704,13 +704,18 @@ func humanSize(bytes int64) string {
 	return fmt.Sprintf("%.2f GB", gb)
 }
 
-// injectSettingIfMissing 在 settings.json 的最后一个 } 前插入设置（如果不存在）
+// injectSettingIfMissing 在 settings.json 的最后一个结构性 } 前插入设置（如果不存在）。
+//
+// key 必须是带引号的属性名(如 `"editor.minimap.enabled"`):因为带了闭合引号,
+// 子串判重不会把 `"editor.minimap.enabled.x"` 这种更长的 key 误判为已存在。
 func injectSettingIfMissing(text *string, key, fullLine string) bool {
 	if strings.Contains(*text, key) {
 		return false
 	}
-	// 找到最后一个 }
-	lastBrace := strings.LastIndex(*text, "}")
+	// 找结构性根闭合 }:用 LastIndex 会把"末尾行注释里的 }"(JSONC 允许注释)
+	// 误当成闭合括号,插到真正的 } 之后 → 产出非法 JSON。这里跳过末尾的
+	// 行注释/块注释/空白,定位真正的根 }。
+	lastBrace := lastStructuralBrace(*text)
 	if lastBrace < 0 {
 		return false
 	}
@@ -723,6 +728,47 @@ func injectSettingIfMissing(text *string, key, fullLine string) bool {
 	}
 	*text = (*text)[:lastBrace] + inject + "\n" + (*text)[lastBrace:]
 	return true
+}
+
+// lastStructuralBrace 返回根对象闭合 } 的下标,忽略其后的尾随空白与
+// 行注释(// …)/块注释(/* … */)。找不到返回 -1。
+func lastStructuralBrace(text string) int {
+	// 从末尾往前剥:空白、整行 // 注释、/* */ 块注释。
+	end := len(text)
+	for {
+		// 去掉尾部空白
+		for end > 0 {
+			c := text[end-1]
+			if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+				end--
+				continue
+			}
+			break
+		}
+		if end == 0 {
+			return -1
+		}
+		// 末尾是 } → 命中
+		if text[end-1] == '}' {
+			return end - 1
+		}
+		// 末尾是块注释 */ → 跳过整段 /* ... */
+		if end >= 2 && text[end-2] == '*' && text[end-1] == '/' {
+			if i := strings.LastIndex(text[:end-2], "/*"); i >= 0 {
+				end = i
+				continue
+			}
+			return -1
+		}
+		// 末尾所在行是 // 行注释 → 跳过该行
+		lineStart := strings.LastIndexByte(text[:end], '\n') + 1
+		if ci := strings.Index(text[lineStart:end], "//"); ci >= 0 {
+			end = lineStart + ci
+			continue
+		}
+		// 末尾既不是 } 也不是注释 → 文件结构不符合预期,放弃(交给 .bak 兜底)
+		return -1
+	}
 }
 
 func injectWatcherExcludes(text *string) bool {

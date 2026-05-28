@@ -9,6 +9,7 @@ import (
 
 	"windsurf-tools-wails/backend/models"
 	"windsurf-tools-wails/backend/services"
+	"windsurf-tools-wails/backend/utils"
 )
 
 // app_provider.go ── 第三方 LLM 提供商账号 (OpenAI / Anthropic / DeepSeek / ...)
@@ -132,7 +133,14 @@ func (a *App) GetActiveAccount() models.ProviderAccount {
 }
 
 // refreshProviderModelsAsync goroutine 入口：忽略 error，已写到 store 字段。
+// 内含 recover：批量导入会并发起多个此 goroutine,任一 panic(如解析异常)
+// 不应连带崩掉整个进程。
 func (a *App) refreshProviderModelsAsync(id, provider, baseURL, token string) {
+	defer func() {
+		if r := recover(); r != nil {
+			utils.DLog("[Provider] refreshProviderModelsAsync panic recovered: %v", r)
+		}
+	}()
 	_ = a.fetchAndPersistProviderModels(id, provider, baseURL, token)
 }
 

@@ -39,6 +39,7 @@ import {
   truncateMiddle,
 } from "../utils/account";
 import { showErrorToast, showToast } from "../utils/toast";
+import IInfoTooltip from "../components/ios/IInfoTooltip";
 
 type DiagnoseStatus = "ok" | "warn" | "error" | "n/a";
 type DiagnoseCheckItem = {
@@ -772,7 +773,7 @@ export default function Dashboard() {
       index: 3,
       title: "打开 MITM 代理",
       description: mitmRunning
-        ? "代理已运行，IDE 流量正在按号池切号。"
+        ? "✅ 全部就绪 — 现在打开或重启 Windsurf，照常对话即可，本工具会在后台自动换号。"
         : setupReady
           ? "下方 MITM 面板里点开关，启动后 IDE 即可正常对话。"
           : "完成上一步后再回来打开。",
@@ -812,15 +813,20 @@ export default function Dashboard() {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <h1 className="text-[17px] font-bold text-ios-text dark:text-ios-textDark">
-                      MITM 总览
+                      总览
                     </h1>
-                    <span className="rounded-full bg-ios-blue/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-ios-blue">
-                      Pure MITM
+                    <span className="inline-flex items-center rounded-full bg-ios-blue/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-ios-blue">
+                      MITM
+                      <IInfoTooltip size={11} maxWidth={260}>
+                        <b>MITM</b>（中间人代理）：本工具在你电脑本地拦截 Windsurf
+                        发出的请求、替换成号池里的账号再转发出去。全程只在本机进行，
+                        IDE 完全无感知，不会上传你的数据。
+                      </IInfoTooltip>
                     </span>
                   </div>
                   <p className="mt-1 max-w-3xl text-[12px] leading-relaxed text-ios-textSecondary dark:text-ios-textSecondaryDark">
-                    这里保留纯 MITM 模式最关键的启用链路：看号池健康、完成 CA 与
-                    Hosts、打开代理、确认当前活跃 Key，并快速跳去 Relay 与设置页。
+                    在这里完成启用的关键四步：看账号池是否健康 → 装好证书与
+                    Hosts → 打开代理 → 确认当前正在用哪个账号。下面按提示一步步点即可。
                   </p>
                 </div>
               </div>

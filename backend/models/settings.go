@@ -54,8 +54,9 @@ type Settings struct {
 	// ── 路由模式 ──
 	// MitmRouteMode 总览面板上「号池 ↔ 提供商」胶囊切换。
 	//   "pool"      — Windsurf 号池接管(默认行为,与历史版本一致)
-	//   "providers" — 第三方 LLM 提供商池接管(Phase 1 仅记录 + UI 展示,
-	//                 后续 phase 接 MITM Cascade→provider 协议转换)
+	//   "providers" — 第三方 LLM 提供商池接管:MITM 实时把 Cascade 请求转换成
+	//                 OpenAI/Anthropic/Gemini 协议转发给激活的提供商账号,
+	//                 配置不全(无激活卡/无 model)时自动回落号池。
 	MitmRouteMode string `json:"mitm_route_mode"`
 
 	// ── MITM 代理 ──

@@ -23,6 +23,10 @@ export interface Account {
   weekly_remaining?: string
   daily_reset_at?: string
   weekly_reset_at?: string
+  /** Extra usage 余额(micros, 百万分之一美元)。正数=可付费兜底, 负数=已欠费 */
+  extra_usage_balance_micros?: number
+  /** 本账号是否带回了 extra usage 字段(区分"余额为0"与"未开通") */
+  has_extra_usage_balance?: boolean
   subscription_expires_at?: string
   token_expires_at?: string
   status: string

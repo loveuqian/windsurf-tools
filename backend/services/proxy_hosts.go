@@ -69,43 +69,53 @@ func AddHostsEntry(domain string) error {
 
 // RemoveHostsEntry removes our hosts entries.
 // When domain is empty or matches TargetDomain, all hostsTargets marker lines are removed.
+//
+// 恢复策略：**优先基于 marker 逐行清理**，只移除本程序加的行（含 hostsMarker），
+// 保留劫持期间用户或其它软件对 /etc/hosts 的合法新增条目。整份 .bak 还原只作为
+// 逐行清理结果异常（清理后文件为空/读取失败）时的兜底，避免把用户的修改一并覆盖。
 func RemoveHostsEntry(domain string) error {
 	path := GetHostsFilePath()
-
-	// 优先从备份恢复
 	backup := hostsBackupPath()
-	if backupData, err := os.ReadFile(backup); err == nil && len(backupData) > 0 {
-		if err := writeSystemFile(path, backupData, 0644); err == nil {
+
+	// 优先：按 marker 逐行清理，只删本程序加的行，保留用户的其它修改。
+	data, err := os.ReadFile(path)
+	if err == nil {
+		var newLines []string
+		scanner := bufio.NewScanner(strings.NewReader(string(data)))
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.Contains(line, hostsMarker) {
+				continue // skip our lines
+			}
+			newLines = append(newLines, line)
+		}
+
+		newContent := strings.Join(newLines, "\n")
+		if !strings.HasSuffix(newContent, "\n") {
+			newContent += "\n"
+		}
+
+		// 逐行清理结果看起来正常（非空白）时写回并完成。
+		if strings.TrimSpace(newContent) != "" {
+			if err := writeSystemFile(path, []byte(newContent), 0644); err != nil {
+				return fmt.Errorf("写入 hosts 文件失败（Linux 会尝试 pkexec/sudo 提权）: %w", err)
+			}
+			_ = os.Remove(backup) // 备份文件保留无害，但既已成功清理即可移除
+			return flushDNS()
+		}
+	}
+
+	// 兜底：逐行清理读取失败或结果异常（被清空）时，才用整份 .bak 还原。
+	if backupData, e := os.ReadFile(backup); e == nil && len(backupData) > 0 {
+		if e := writeSystemFile(path, backupData, 0644); e == nil {
 			_ = os.Remove(backup)
 			return flushDNS()
 		}
 	}
 
-	// 备份不可用时按标记逐行清理
-	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("读取 hosts 文件失败: %w", err)
 	}
-
-	var newLines []string
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.Contains(line, hostsMarker) {
-			continue // skip our lines
-		}
-		newLines = append(newLines, line)
-	}
-
-	newContent := strings.Join(newLines, "\n")
-	if !strings.HasSuffix(newContent, "\n") {
-		newContent += "\n"
-	}
-
-	if err := writeSystemFile(path, []byte(newContent), 0644); err != nil {
-		return fmt.Errorf("写入 hosts 文件失败（Linux 会尝试 pkexec/sudo 提权）: %w", err)
-	}
-
 	return flushDNS()
 }
 

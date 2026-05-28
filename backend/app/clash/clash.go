@@ -12,6 +12,7 @@
 package clash
 
 import (
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,8 @@ import (
 type SettingsStore interface {
 	GetSettings() models.Settings
 	UpdateSettings(models.Settings) error
+	MutateSettings(func(*models.Settings)) error
+	DataDir() string
 }
 
 // AutoSetupResult 「智能启用」按钮的反馈，给前端弹 toast 用。
@@ -102,6 +105,7 @@ func (m *Module) ApplySettings() {
 		return
 	}
 	cfg := BuildConfig(settings)
+	cfg.StateFile = m.stateFilePath()
 	if cfg.ControllerURL == "" || cfg.Group == "" {
 		utils.DLog("[Clash] 启用但 controller_url 或 group 为空，跳过启动")
 		m.proxy.SetOnUpstreamRateLimit(nil)
@@ -115,6 +119,33 @@ func (m *Module) ApplySettings() {
 	m.proxy.SetOnUpstreamRateLimit(func(detail string) {
 		r.TriggerRotate("rate_limit")
 	})
+}
+
+// stateFilePath 返回 clash 原始节点持久化文件路径(空 dataDir → 空,禁用持久化)。
+func (m *Module) stateFilePath() string {
+	if m == nil || m.store == nil {
+		return ""
+	}
+	dir := m.store.DataDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "clash_rotator_state.json")
+}
+
+// Recover 在进程启动时(initBackend 内、ApplySettings 之前)调用一次:若上次没正常
+// 退出残留了原始节点记录,把 Clash selector 切回该节点。无残留时静默返回。
+func (m *Module) Recover() {
+	if m == nil || m.store == nil {
+		return
+	}
+	s := m.store.GetSettings()
+	services.RecoverResidualClashNode(
+		strings.TrimSpace(s.ClashControllerURL),
+		strings.TrimSpace(s.ClashSecret),
+		m.stateFilePath(),
+		func(msg string) { utils.DLog("%s", msg) },
+	)
 }
 
 // Stop 关停（在 shutdown 中调用）。
@@ -215,14 +246,14 @@ func (m *Module) AutoSetup() AutoSetupResult {
 		return AutoSetupResult{Error: auto.Error, Hint: hint}
 	}
 
-	// ③ 写回 settings —— 注意保留用户已配置的其它字段
-	settings.ClashRotateEnabled = true
-	settings.ClashGroup = auto.Group
-	// ★ 强制开启「限速自动切」：用户期望「智能启用 = 一切自动」，
-	// 之前若显式关过这个开关也会被覆盖。否则 rate-limit 触发时不切，
-	// 用户会困惑「为什么 IDE 报 rate limit 但 IP 没变」。
-	settings.ClashRotateOnRateLimit = true
-	if err := m.store.UpdateSettings(settings); err != nil {
+	// ③ 写回 settings —— 用原子 RMW 保留用户已配置的其它字段,避免与并发的
+	//    自动切号/UpdateSettings 互相覆盖。
+	// ★ 强制开启「限速自动切」:用户期望「智能启用 = 一切自动」。
+	if err := m.store.MutateSettings(func(s *models.Settings) {
+		s.ClashRotateEnabled = true
+		s.ClashGroup = auto.Group
+		s.ClashRotateOnRateLimit = true
+	}); err != nil {
 		return AutoSetupResult{Error: "保存设置失败: " + err.Error()}
 	}
 

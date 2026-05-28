@@ -16,8 +16,7 @@ const KIND_TONE: Record<ToastKind, string> = {
 };
 
 /**
- * IToast — React 重构占位（Day 2 完整迁移到与 Vue 版动效一致）。
- * 当前最小可用：底部右侧堆叠列表 + 双击/X 关闭。
+ * IToast — 全局轻提示。底部右侧堆叠列表 + 双击/X 关闭，按类型着色。
  */
 export default function IToast() {
   const queue = useToastQueue();

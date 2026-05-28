@@ -15,8 +15,85 @@ import (
 
 func (a *App) GetSettings() models.Settings { return a.store.GetSettings() }
 
+// clampSettings 对所有有明确数值语义的字段做范围钳制，防止前端或导入的非法值
+// （如 OpenAIRelayPort=70000、负间隔、超大并发）原样落库导致监听失败 / 死循环等。
+// 必须在 store.UpdateSettings 之前调用，确保钳制后的值既下发又持久化。
+// 范围依据 backend/models/settings.go 各字段注释 + 已有 clamp 常量。
+func clampSettings(s *models.Settings) {
+	if s == nil {
+		return
+	}
+
+	// ── 端口 ── OpenAI 中转监听端口，必须在合法 TCP 端口区间，非法/<=0 回默认 8787
+	if s.OpenAIRelayPort <= 0 || s.OpenAIRelayPort > 65535 {
+		s.OpenAIRelayPort = 8787
+	}
+
+	// ── 并发 ──
+	// ConcurrentLimit 通用批量并发，[1,20]
+	if s.ConcurrentLimit < 1 {
+		s.ConcurrentLimit = 1
+	} else if s.ConcurrentLimit > 20 {
+		s.ConcurrentLimit = 20
+	}
+	// ImportConcurrency 导入并发，[1,20]（默认 3）
+	if s.ImportConcurrency < 1 {
+		s.ImportConcurrency = 1
+	} else if s.ImportConcurrency > 20 {
+		s.ImportConcurrency = 20
+	}
+
+	// ── 额度热轮询 ── 复用 app_quota.go 已有 clamp（[5,60]），保持一致
+	s.QuotaHotPollSeconds = clampQuotaHotPollSeconds(s.QuotaHotPollSeconds)
+
+	// ── 自定义同步间隔 ── 复用 utils 已有 clamp（[5,10080]，非法回默认 360）
+	s.QuotaCustomIntervalMinutes = utils.ClampQuotaCustomIntervalMinutes(s.QuotaCustomIntervalMinutes)
+
+	// ── 切号冷却 ── SwitchCooldownBaseSec 注释范围 [30,3600]，默认 300
+	if s.SwitchCooldownBaseSec < 30 {
+		s.SwitchCooldownBaseSec = 30
+	} else if s.SwitchCooldownBaseSec > 3600 {
+		s.SwitchCooldownBaseSec = 3600
+	}
+
+	// ── 轮换池 ──
+	// RotationPoolIntervalMin 定时切间隔，注释范围 [1,60]，默认 5
+	if s.RotationPoolIntervalMin < 1 {
+		s.RotationPoolIntervalMin = 1
+	} else if s.RotationPoolIntervalMin > 60 {
+		s.RotationPoolIntervalMin = 60
+	}
+	// RotationPoolQuotaRefreshMin 额度刷新间隔，注释范围 [1,10]，默认 1
+	if s.RotationPoolQuotaRefreshMin < 1 {
+		s.RotationPoolQuotaRefreshMin = 1
+	} else if s.RotationPoolQuotaRefreshMin > 10 {
+		s.RotationPoolQuotaRefreshMin = 10
+	}
+
+	// ── Clash 轮换 ──
+	// ClashIntervalMinutes 轮换间隔（分钟），注释范围 [2,60]，默认 8
+	if s.ClashIntervalMinutes < 2 {
+		s.ClashIntervalMinutes = 2
+	} else if s.ClashIntervalMinutes > 60 {
+		s.ClashIntervalMinutes = 60
+	}
+	// ClashLatencyMaxMs 延迟上限毫秒，0=跳过测速；负值无意义归 0
+	if s.ClashLatencyMaxMs < 0 {
+		s.ClashLatencyMaxMs = 0
+	}
+
+	// ── 窗口尺寸 ── 宽/高为负无意义归 0（0 表示走内置默认）；X/Y 允许 -1（居中）
+	if s.WindowWidth < 0 {
+		s.WindowWidth = 0
+	}
+	if s.WindowHeight < 0 {
+		s.WindowHeight = 0
+	}
+}
+
 func (a *App) UpdateSettings(settings models.Settings) error {
 	prev := a.store.GetSettings()
+	clampSettings(&settings)
 	if err := a.store.UpdateSettings(settings); err != nil {
 		return err
 	}
@@ -24,23 +101,35 @@ func (a *App) UpdateSettings(settings models.Settings) error {
 		a.mitmProxy.SetWindsurfService(a.windsurfSvc)
 	}
 	if settings.AutoRefreshTokens {
-		if a.cancelAutoRefresh == nil {
+		a.mu.Lock()
+		running := a.cancelAutoRefresh != nil
+		a.mu.Unlock()
+		if !running {
 			a.startAutoRefresh()
 		}
 	} else {
-		if a.cancelAutoRefresh != nil {
-			a.cancelAutoRefresh()
-			a.cancelAutoRefresh = nil
+		a.mu.Lock()
+		cancel := a.cancelAutoRefresh
+		a.cancelAutoRefresh = nil
+		a.mu.Unlock()
+		if cancel != nil {
+			cancel()
 		}
 	}
 	if settings.AutoRefreshQuotas {
-		if a.cancelAutoQuotaRefresh == nil {
+		a.mu.Lock()
+		running := a.cancelAutoQuotaRefresh != nil
+		a.mu.Unlock()
+		if !running {
 			a.startAutoQuotaRefresh()
 		}
 	} else {
-		if a.cancelAutoQuotaRefresh != nil {
-			a.cancelAutoQuotaRefresh()
-			a.cancelAutoQuotaRefresh = nil
+		a.mu.Lock()
+		cancel := a.cancelAutoQuotaRefresh
+		a.cancelAutoQuotaRefresh = nil
+		a.mu.Unlock()
+		if cancel != nil {
+			cancel()
 		}
 	}
 	a.restartQuotaHotPollIfNeeded()

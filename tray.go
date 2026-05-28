@@ -37,7 +37,9 @@ func (a *App) onTrayReady() {
 				// 关键：必须先标记 shuttingDown 再 runtime.Quit，否则 onBeforeClose
 				// 看到 MinimizeToTray=true 会隐藏窗口阻止关闭，进程永不退出，
 				// hosts/CA/Codeium 配置永远残留。requestExit 把这一步打包好。
-				systray.Quit()
+				// ★ 不在这里显式 systray.Quit():requestExit → runtime.Quit 会终止整个
+				//   进程(含本 systray goroutine)。重复 Quit 在部分 systray 版本会因
+				//   关闭已关闭的 channel 而 panic/死锁。让 Wails 退出流程统一收尾。
 				a.requestExit()
 				return
 			}

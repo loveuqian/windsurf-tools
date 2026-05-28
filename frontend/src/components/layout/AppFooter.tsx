@@ -1,9 +1,9 @@
-/** AppFooter — React 重构占位（Day 2 完整迁移） */
+/** AppFooter — 底部版本信息条。 */
 export default function AppFooter() {
   const version = import.meta.env.VITE_APP_VERSION ?? "dev";
   return (
     <footer className="text-[11px] text-ios-textSecondary dark:text-ios-textSecondaryDark text-center py-2 shrink-0 select-none">
-      v{version} · React 重构进行中
+      Windsurf Tools v{version} · 本地运行 · MIT 开源
     </footer>
   );
 }

@@ -107,7 +107,14 @@ func RestoreCodeiumConfig() error {
 	backupPath := filepath.Join(dir, "config.json.bak")
 
 	if backupData, err := os.ReadFile(backupPath); err == nil {
-		_ = os.WriteFile(configPath, backupData, 0644)
+		// 用 robustWriteFile 写回（直写→临时→PowerShell 三级降级），兼容
+		// Windsurf 以管理员锁定 config.json 的情况。
+		if err := robustWriteFile(configPath, backupData); err != nil {
+			// 写入失败：**不要**删除备份，否则原始 config 会永久丢失。返回错误，
+			// 让上层知道恢复未完成、备份仍在，可重试。
+			return fmt.Errorf("恢复 codeium config 失败（备份已保留 %s）: %w", backupPath, err)
+		}
+		// 仅在写入成功后才删除备份。
 		_ = os.Remove(backupPath)
 		return nil
 	}
@@ -123,8 +130,13 @@ func RestoreCodeiumConfig() error {
 	}
 	delete(config, "api_key")
 	delete(config, "apiKey")
-	newData, _ := json.MarshalIndent(config, "", "  ")
-	_ = os.WriteFile(configPath, newData, 0644)
+	newData, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化 codeium config: %w", err)
+	}
+	if err := robustWriteFile(configPath, newData); err != nil {
+		return fmt.Errorf("清除 codeium config 注入字段失败: %w", err)
+	}
 	return nil
 }
 

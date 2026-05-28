@@ -16,6 +16,8 @@ export function AutoDetectClashGroup():Promise<services.AutoDetectClashGroupResu
 
 export function AutoSetupClash():Promise<main.AutoSetupClashResult>;
 
+export function Candidates():Promise<Array<models.ProviderAccount>>;
+
 export function CleanupAllSafe():Promise<Array<main.CleanupResult>>;
 
 export function CleanupStartupCache():Promise<Array<main.CleanupResult>>;

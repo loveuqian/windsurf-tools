@@ -2,6 +2,7 @@ package main
 
 import (
 	"strings"
+	"windsurf-tools-wails/backend/models"
 	"windsurf-tools-wails/backend/services"
 	"windsurf-tools-wails/backend/utils"
 )
@@ -70,23 +71,13 @@ func (a *App) StartOpenAIRelay(port int, secret string) error {
 		return err
 	}
 	if a.store != nil {
-		s := a.store.GetSettings()
-		changed := false
-		if !s.OpenAIRelayEnabled {
+		_ = a.store.MutateSettings(func(s *models.Settings) {
 			s.OpenAIRelayEnabled = true
-			changed = true
-		}
-		if port > 0 && s.OpenAIRelayPort != port {
-			s.OpenAIRelayPort = port
-			changed = true
-		}
-		if s.OpenAIRelaySecret != secret {
+			if port > 0 {
+				s.OpenAIRelayPort = port
+			}
 			s.OpenAIRelaySecret = secret
-			changed = true
-		}
-		if changed {
-			_ = a.store.UpdateSettings(s)
-		}
+		})
 	}
 	return nil
 }
@@ -101,11 +92,9 @@ func (a *App) StopOpenAIRelay() error {
 		return err
 	}
 	if a.store != nil {
-		s := a.store.GetSettings()
-		if s.OpenAIRelayEnabled {
+		_ = a.store.MutateSettings(func(s *models.Settings) {
 			s.OpenAIRelayEnabled = false
-			_ = a.store.UpdateSettings(s)
-		}
+		})
 	}
 	return nil
 }

@@ -18,11 +18,12 @@ import (
 	"windsurf-tools-wails/backend/utils"
 )
 
-// SettingsStore 描述 pin 模块需要的 store 能力（GetSettings/UpdateSettings/GetAccount）。
+// SettingsStore 描述 pin 模块需要的 store 能力（GetSettings/MutateSettings/GetAccount）。
 // 真实实现是 *store.Store；用接口仅是为了便于单测替身。
 type SettingsStore interface {
 	GetSettings() models.Settings
 	UpdateSettings(models.Settings) error
+	MutateSettings(func(*models.Settings)) error
 	GetAccount(id string) (models.Account, error)
 }
 
@@ -89,13 +90,14 @@ func (m *Module) Set(accountID string) bool {
 	if accountID == "" {
 		return false
 	}
-	s := m.store.GetSettings()
-	if s.ManualPinEnabled && s.ManualPinAccountID == accountID {
+	if s := m.store.GetSettings(); s.ManualPinEnabled && s.ManualPinAccountID == accountID {
 		return true // 已 pin 同一账号，no-op
 	}
-	s.ManualPinEnabled = true
-	s.ManualPinAccountID = accountID
-	if err := m.store.UpdateSettings(s); err != nil {
+	// 原子读改写,避免与并发的 UpdateSettings / 其它 Toggle 互相覆盖。
+	if err := m.store.MutateSettings(func(s *models.Settings) {
+		s.ManualPinEnabled = true
+		s.ManualPinAccountID = accountID
+	}); err != nil {
 		utils.DLog("[Pin] setManualPin 写 settings 失败: %v", err)
 		return false
 	}
@@ -116,9 +118,10 @@ func (m *Module) Unpin() error {
 		return nil // idempotent
 	}
 	pinnedID := s.ManualPinAccountID
-	s.ManualPinEnabled = false
-	s.ManualPinAccountID = ""
-	if err := m.store.UpdateSettings(s); err != nil {
+	if err := m.store.MutateSettings(func(s *models.Settings) {
+		s.ManualPinEnabled = false
+		s.ManualPinAccountID = ""
+	}); err != nil {
 		return err
 	}
 	utils.DLog("[Pin] 手动解锁完成，所有自动切换已恢复")

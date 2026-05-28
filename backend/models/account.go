@@ -22,6 +22,12 @@ type Account struct {
 	WeeklyRemaining       string `json:"weekly_remaining"` // 例如 "72.1%"
 	DailyResetAt          string `json:"daily_reset_at"`
 	WeeklyResetAt         string `json:"weekly_reset_at"`
+	// ExtraUsageBalanceMicros 额外用量余额(Extra usage balance),单位 micros(百万分之一美元)。
+	// 来自 GetPlanStatus 的 overageBalanceMicros 字段。正数=还有预付余额可用;
+	// 负数=已用超/欠费;0 或字段缺失=未开通 extra usage。
+	// HasExtraUsageBalance 标记本账号是否真的带回了该字段(区分"余额=0"与"没这字段")。
+	ExtraUsageBalanceMicros int64 `json:"extra_usage_balance_micros"`
+	HasExtraUsageBalance    bool  `json:"has_extra_usage_balance"`
 	SubscriptionExpiresAt string `json:"subscription_expires_at"`
 	TokenExpiresAt        string `json:"token_expires_at"`
 	Status                string `json:"status"`

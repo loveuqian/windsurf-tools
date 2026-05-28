@@ -25,6 +25,7 @@ import {
 } from '../utils/provider'
 import { formatDateTimeAsiaShanghai } from '../utils/datetimeAsia'
 import { showToast } from '../utils/toast'
+import IInfoTooltip from '../components/ios/IInfoTooltip'
 
 // Providers 视图只展示通过「批量导入提供商」入库的 ProviderAccount，
 // 与 Windsurf 号池(useAccountStore.accounts)物理隔离 —— 不复用 sk-* 前缀
@@ -90,7 +91,15 @@ export default function Providers() {
   // 行内编辑：一次只允许一行进入编辑态
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState({ nickname: '', remark: '', status: 'active' })
-  const [savingId, setSavingId] = useState<string | null>(null)
+  const [savingIds, setSavingIds] = useState<Set<string>>(new Set())
+  const isSaving = (id: string) => savingIds.has(id)
+  const beginSave = (id: string) => setSavingIds((prev) => new Set(prev).add(id))
+  const endSave = (id: string) =>
+    setSavingIds((prev) => {
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [refreshingModelsId, setRefreshingModelsId] = useState<string | null>(null)
   const mountedRef = useRef(false)
@@ -186,8 +195,8 @@ export default function Providers() {
   const cancelEdit = () => setEditingId(null)
 
   const saveEdit = async (acc: ProviderAccountModel) => {
-    if (savingId) return
-    setSavingId(acc.id)
+    if (isSaving(acc.id)) return
+    beginSave(acc.id)
     try {
       const next: ProviderAccountModel = {
         ...acc,
@@ -201,13 +210,13 @@ export default function Providers() {
     } catch (e: unknown) {
       showToast(`保存失败: ${String(e)}`, 'error')
     } finally {
-      setSavingId(null)
+      endSave(acc.id)
     }
   }
 
   const toggleStatus = async (acc: ProviderAccountModel) => {
-    if (savingId) return
-    setSavingId(acc.id)
+    if (isSaving(acc.id)) return
+    beginSave(acc.id)
     try {
       const next: ProviderAccountModel = {
         ...acc,
@@ -218,7 +227,7 @@ export default function Providers() {
     } catch (e: unknown) {
       showToast(`切换状态失败: ${String(e)}`, 'error')
     } finally {
-      setSavingId(null)
+      endSave(acc.id)
     }
   }
 
@@ -246,8 +255,8 @@ export default function Providers() {
   }
 
   const toggleActivated = async (acc: ProviderAccountModel) => {
-    if (savingId) return
-    setSavingId(acc.id)
+    if (isSaving(acc.id)) return
+    beginSave(acc.id)
     try {
       const next: ProviderAccountModel = { ...acc, activated: !acc.activated }
       await updateAccount(next)
@@ -255,21 +264,22 @@ export default function Providers() {
     } catch (e: unknown) {
       showToast(`切换激活态失败: ${String(e)}`, 'error')
     } finally {
-      setSavingId(null)
+      endSave(acc.id)
     }
   }
 
   const setActiveModel = async (acc: ProviderAccountModel, model: string) => {
-    if (savingId) return
+    if (isSaving(acc.id)) return
     if ((acc.active_model || '') === model) return
-    setSavingId(acc.id)
+    beginSave(acc.id)
     try {
       const next: ProviderAccountModel = { ...acc, active_model: model }
       await updateAccount(next)
+      showToast('已设置当前模型', 'success')
     } catch (e: unknown) {
       showToast(`设置 active_model 失败: ${String(e)}`, 'error')
     } finally {
-      setSavingId(null)
+      endSave(acc.id)
     }
   }
 
@@ -296,8 +306,13 @@ export default function Providers() {
               <Layers className="h-6 w-6" strokeWidth={2.4} />
             </div>
             <div>
-              <h1 className="text-[22px] font-extrabold tracking-tight text-ios-text dark:text-ios-textDark">
+              <h1 className="flex items-center text-[22px] font-extrabold tracking-tight text-ios-text dark:text-ios-textDark">
                 提供商
+                <IInfoTooltip size={14} maxWidth={280}>
+                  在这里填你自己的第三方 API Key（OpenAI / Claude / Gemini 等）。
+                  给某张卡<b>选好「当前模型」并「激活」</b>后，到总览页把开关切到
+                  「提供商」，Windsurf 的对话就会改用这张卡回复。同一时刻只有一张激活卡生效。
+                </IInfoTooltip>
               </h1>
               <p className="text-[12px] text-ios-textSecondary dark:text-ios-textSecondaryDark">
                 第三方 LLM 账号池(OpenAI / Anthropic / Google / DeepSeek …) — 与 Windsurf 号池物理隔离
@@ -376,7 +391,7 @@ export default function Providers() {
               isEditing={editingId === acc.id}
               editDraft={editDraft}
               setEditDraft={setEditDraft}
-              savingId={savingId}
+              saving={isSaving(acc.id)}
               deletingId={deletingId}
               refreshingModelsId={refreshingModelsId}
               onStartEdit={() => startEdit(acc)}
@@ -436,7 +451,7 @@ interface ProviderCardProps {
   isEditing: boolean
   editDraft: { nickname: string; remark: string; status: string }
   setEditDraft: (d: { nickname: string; remark: string; status: string }) => void
-  savingId: string | null
+  saving: boolean
   deletingId: string | null
   refreshingModelsId: string | null
   onStartEdit: () => void
@@ -452,7 +467,7 @@ interface ProviderCardProps {
 function ProviderCard(props: ProviderCardProps) {
   const {
     acc, isEditing, editDraft, setEditDraft,
-    savingId, deletingId, refreshingModelsId,
+    saving, deletingId, refreshingModelsId,
     onStartEdit, onCancelEdit, onSaveEdit, onToggleStatus, onDelete,
     onToggleActivated, onSetActiveModel, onRefreshModels,
   } = props
@@ -540,7 +555,7 @@ function ProviderCard(props: ProviderCardProps) {
                     ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
                     : 'bg-black/[0.06] text-ios-textSecondary dark:bg-white/[0.08] dark:text-ios-textSecondaryDark'
                 }`}
-                disabled={savingId === acc.id}
+                disabled={saving}
                 onClick={onToggleActivated}
               >
                 {acc.activated ? '已激活' : '未激活'}
@@ -550,7 +565,7 @@ function ProviderCard(props: ProviderCardProps) {
               <select
                 value={acc.active_model || ''}
                 className="flex-1 min-w-0 rounded-[10px] border border-black/[0.08] bg-white px-2 py-1.5 text-[11px] font-mono outline-none focus:border-ios-blue/60 dark:border-white/[0.08] dark:bg-white/[0.06] disabled:opacity-50"
-                disabled={savingId === acc.id || !(acc.models && acc.models.length)}
+                disabled={saving || !(acc.models && acc.models.length)}
                 onChange={(e) => onSetActiveModel(e.target.value)}
               >
                 <option value="" disabled>
@@ -632,7 +647,7 @@ function ProviderCard(props: ProviderCardProps) {
             <button
               type="button"
               className="ios-btn flex h-8 items-center gap-1 rounded-full border border-black/[0.06] bg-white/70 px-3 text-[11px] font-bold text-ios-textSecondary hover:text-ios-text dark:border-white/[0.06] dark:bg-white/[0.04] dark:text-ios-textSecondaryDark dark:hover:text-ios-textDark"
-              disabled={savingId === acc.id}
+              disabled={saving}
               onClick={onCancelEdit}
             >
               取消
@@ -640,11 +655,11 @@ function ProviderCard(props: ProviderCardProps) {
             <button
               type="button"
               className="ios-btn flex h-8 items-center gap-1 rounded-full bg-gradient-to-b from-[#3b82f6] to-ios-blue px-3 text-[11px] font-bold text-white shadow-md shadow-ios-blue/25 disabled:opacity-50"
-              disabled={savingId === acc.id}
+              disabled={saving}
               onClick={onSaveEdit}
             >
               <Save className="h-3 w-3" strokeWidth={2.6} />
-              {savingId === acc.id ? '保存中…' : '保存'}
+              {saving ? '保存中…' : '保存'}
             </button>
           </>
         ) : (
@@ -652,7 +667,7 @@ function ProviderCard(props: ProviderCardProps) {
             <button
               type="button"
               className="ios-btn flex h-8 items-center gap-1 rounded-full border border-black/[0.06] bg-white/70 px-3 text-[11px] font-bold text-ios-textSecondary hover:text-ios-text dark:border-white/[0.06] dark:bg-white/[0.04] dark:text-ios-textSecondaryDark dark:hover:text-ios-textDark"
-              disabled={savingId === acc.id}
+              disabled={saving}
               onClick={onToggleStatus}
             >
               {acc.status === 'disabled' ? '启用' : '禁用'}

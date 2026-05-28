@@ -21,4 +21,11 @@ func (a *App) ActiveAccount() (models.ProviderAccount, bool) {
 	return a.providerStore.GetActivated()
 }
 
+func (a *App) Candidates() []models.ProviderAccount {
+	if a == nil || a.providerStore == nil {
+		return nil
+	}
+	return a.providerStore.CandidatesForActive()
+}
+
 var _ services.Router = (*App)(nil)

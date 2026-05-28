@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -263,6 +264,20 @@ func (s *Store) UpdateSettings(st models.Settings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.settings = st
+	return s.saveSettings()
+}
+
+// MutateSettings 在持锁状态下对当前 settings 做读-改-写,消除多入口并发 RMW 丢更新。
+//
+//	mutate 收到指向当前 settings 副本的指针,直接修改其字段即可;返回后原子持久化。
+//	所有"只改少数字段"的入口(Pin/Unpin、各 Toggle 开关)都应走这里,而不是
+//	GetSettings()→改→UpdateSettings()——后者会用读时的旧快照覆盖期间别处的修改。
+func (s *Store) MutateSettings(mutate func(*models.Settings)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cur := s.settings
+	mutate(&cur)
+	s.settings = cur
 	return s.saveSettings()
 }
 
@@ -556,6 +571,59 @@ func (s *ProviderAccountStore) NextActivated() (models.ProviderAccount, error) {
 		return models.ProviderAccount{}, err
 	}
 	return s.accounts[nextIdx], nil
+}
+
+// CandidatesForActive 返回当前激活卡 + 同 active_model 的其它可用卡,用于上游
+// 请求失败时的故障切换重试。顺序:激活卡排第一,其余按 ID 升序。
+//
+// 过滤条件与 NextActivated 一致:status≠disabled、base_url/auth_token 非空、
+// active_model 非空且与激活卡相同。无激活卡时返回 nil(由上层回落号池处理)。
+func (s *ProviderAccountStore) CandidatesForActive() []models.ProviderAccount {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	usable := func(acc models.ProviderAccount) bool {
+		if strings.ToLower(strings.TrimSpace(acc.Status)) == "disabled" {
+			return false
+		}
+		if strings.TrimSpace(acc.BaseURL) == "" || strings.TrimSpace(acc.AuthToken) == "" {
+			return false
+		}
+		return true
+	}
+
+	activeIdx := -1
+	for i := range s.accounts {
+		if s.accounts[i].Activated && usable(s.accounts[i]) {
+			activeIdx = i
+			break
+		}
+	}
+	if activeIdx < 0 {
+		return nil
+	}
+
+	targetModel := strings.TrimSpace(s.accounts[activeIdx].ActiveModel)
+
+	// 收集其它同 model 候选(排除激活卡自身)。targetModel 为空时无可靠的同组
+	// 概念,只返回激活卡自己,避免把不相干的卡也拿来重试。
+	others := make([]models.ProviderAccount, 0)
+	if targetModel != "" {
+		for i := range s.accounts {
+			if i == activeIdx || !usable(s.accounts[i]) {
+				continue
+			}
+			if strings.TrimSpace(s.accounts[i].ActiveModel) == targetModel {
+				others = append(others, s.accounts[i])
+			}
+		}
+		sort.Slice(others, func(a, b int) bool { return others[a].ID < others[b].ID })
+	}
+
+	out := make([]models.ProviderAccount, 0, len(others)+1)
+	out = append(out, s.accounts[activeIdx])
+	out = append(out, others...)
+	return out
 }
 
 // SetProviderModels 写回某账号的 /v1/models 拉取结果。

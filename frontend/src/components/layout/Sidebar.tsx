@@ -21,6 +21,7 @@ import { useMitmStatusStore } from "../../stores/useMitmStatusStore";
 import { useSettingsStore } from "../../stores/useSettingsStore";
 import { showErrorToast, showToast } from "../../utils/toast";
 import { PRIMARY_POOL_LABEL, type ShellViewTab } from "../../utils/appMode";
+import IInfoTooltip from "../ios/IInfoTooltip";
 
 interface MenuItem {
   id: ShellViewTab;
@@ -239,8 +240,21 @@ export default function Sidebar() {
         )}
 
         {/* ★ 路由模式胶囊：号池 ↔ 提供商(iOS 风滑动指示条) */}
+        <div className="mt-3 mb-1 flex items-center gap-0.5 px-1">
+          <span className="text-[10.5px] font-semibold uppercase tracking-wide text-ios-textSecondary dark:text-ios-textSecondaryDark">
+            谁来接管请求
+          </span>
+          <IInfoTooltip size={12} maxWidth={260}>
+            <b>号池</b>：用你导入的 Windsurf 账号轮流回复（默认）。
+            <br />
+            <b>提供商</b>：改用你自己的 OpenAI / Claude / Gemini 等第三方 API
+            Key 回复 —— 需要先在「提供商」页导入并激活一张卡、选好模型。
+            <br />
+            切到提供商后若没配好，会自动回落到号池，不会中断使用。
+          </IInfoTooltip>
+        </div>
         <div
-          className="no-drag-region relative mt-2 flex items-stretch rounded-full border border-black/[0.06] bg-white/80 p-0.5 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.05]"
+          className="no-drag-region relative flex items-stretch rounded-full border border-black/[0.06] bg-white/80 p-0.5 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.05]"
           role="tablist"
         >
           <span

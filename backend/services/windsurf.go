@@ -114,6 +114,10 @@ type AccountProfile struct {
 	WeeklyQuotaRemaining  *float64
 	DailyResetAt          string
 	WeeklyResetAt         string
+	// ExtraUsageBalanceMicros 额外用量余额(micros),来自 overageBalanceMicros。
+	// HasExtraUsageBalance 标记响应里是否真带了该字段。
+	ExtraUsageBalanceMicros int64
+	HasExtraUsageBalance    bool
 	SubscriptionExpiresAt string
 	BillingStrategy       string
 }
@@ -129,6 +133,7 @@ type planStatusPayload struct {
 	UsedUsageCredits            *int                   `json:"usedUsageCredits"`
 	DailyQuotaRemainingPercent  *float64               `json:"dailyQuotaRemainingPercent"`
 	WeeklyQuotaRemainingPercent *float64               `json:"weeklyQuotaRemainingPercent"`
+	OverageBalanceMicros        json.RawMessage        `json:"overageBalanceMicros"`
 	DailyQuotaResetAtUnix       json.RawMessage        `json:"dailyQuotaResetAtUnix"`
 	WeeklyQuotaResetAtUnix      json.RawMessage        `json:"weeklyQuotaResetAtUnix"`
 	PlanEnd                     json.RawMessage        `json:"planEnd"`
@@ -716,6 +721,12 @@ func parsePlanStatusPayload(ps planStatusPayload) *AccountProfile {
 		DailyResetAt:          unixToRFC3339(rawMsgToInt64(ps.DailyQuotaResetAtUnix)),
 		WeeklyResetAt:         unixToRFC3339(rawMsgToInt64(ps.WeeklyQuotaResetAtUnix)),
 		SubscriptionExpiresAt: pickSubscriptionExpiresFromPlanStatus(ps),
+	}
+	// Extra usage balance(overageBalanceMicros):micros 单位,字符串形如 "-787965"。
+	// 字段缺失/null → 视为未开通(HasExtraUsageBalance=false)。
+	if raw := strings.Trim(string(ps.OverageBalanceMicros), "\" \t\n"); raw != "" && raw != "null" {
+		profile.HasExtraUsageBalance = true
+		profile.ExtraUsageBalanceMicros = rawMsgToInt64(ps.OverageBalanceMicros)
 	}
 
 	total := creditsToUnits(ps.AvailablePromptCredits) + creditsToUnits(ps.AvailableFlowCredits)

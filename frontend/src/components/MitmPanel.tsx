@@ -19,9 +19,10 @@ import {
 } from "lucide-react";
 import SessionPanel from "./SessionPanel";
 import IToggle from "./ios/IToggle";
+import IInfoTooltip from "./ios/IInfoTooltip";
 import { APIInfo } from "../api/wails";
 import { useMitmStatusStore } from "../stores/useMitmStatusStore";
-import { confirmDialog, showToast } from "../utils/toast";
+import { confirmDialog, showToast, showErrorToast } from "../utils/toast";
 import { formatDateTimeAsiaShanghai } from "../utils/datetimeAsia";
 import { usePersistentMitmEvents } from "../hooks/usePersistentMitmEvents";
 
@@ -217,7 +218,7 @@ export default function MitmPanel() {
       else await APIInfo.stopMitmProxy();
       await fetchStatus(true);
     } catch (e) {
-      setError(String(e));
+      showErrorToast(e, on ? "启动代理失败" : "停止代理失败");
     } finally {
       setLoading(false);
     }
@@ -257,14 +258,26 @@ export default function MitmPanel() {
     }
   };
 
-  const handleSetupCA = () =>
-    runStep(
+  // CA 安装前的人话说明:第一次装证书会触发系统密码弹窗(mac 弹 Terminal、
+  // Windows 弹 UAC),提前告知避免用户看到突然弹窗以为中毒/误操作。
+  const caInstallNotice = isMac
+    ? "接下来会弹出一个「终端」黑色窗口，要求输入你的电脑开机密码。\n\n这是 macOS 安装本地证书的正常步骤，密码只在你本机使用、不会上传。输入后按回车，窗口会自动关闭。"
+    : "接下来系统可能弹出权限确认（UAC），用于把本地证书装进系统信任库。\n\n证书只在你本机使用，不会上传。请允许继续。";
+
+  const handleSetupCA = async () => {
+    const ok = await confirmDialog(caInstallNotice, {
+      confirmText: "我知道了，继续",
+      cancelText: "取消",
+    });
+    if (!ok) return;
+    await runStep(
       "ca",
       () => APIInfo.setupMitmCA(),
       "CA 证书已生成并安装到系统信任库",
       "CA 安装失败",
       "正在弹出 Terminal 安装 CA 信任，请在终端窗口里输入登录密码后回车",
     );
+  };
   const handleSetupHosts = () =>
     runStep(
       "hosts",
@@ -274,6 +287,11 @@ export default function MitmPanel() {
     );
 
   const handleSetupAll = async () => {
+    const ok = await confirmDialog(caInstallNotice, {
+      confirmText: "我知道了，继续",
+      cancelText: "取消",
+    });
+    if (!ok) return;
     setLoading(true);
     setStepBusy("all");
     setError("");
@@ -364,6 +382,7 @@ export default function MitmPanel() {
     {
       key: "ca",
       title: "CA 证书",
+      tip: "一张本地根证书,装进系统信任库后,本工具才能解密并改写 Windsurf 的 HTTPS 请求。只在你本机使用,可随时一键卸载。",
       ready: status?.ca_installed === true,
       onClick: handleSetupCA,
       onUninstall: handleUninstallCA,
@@ -373,6 +392,7 @@ export default function MitmPanel() {
     {
       key: "hosts",
       title: "Hosts 劫持",
+      tip: "把 Windsurf 的服务器域名在本机指向 127.0.0.1,这样请求才会先经过本工具。卸载时会自动还原,不影响你 hosts 里的其它内容。",
       ready: status?.hosts_mapped === true,
       onClick: handleSetupHosts,
       onUninstall: handleUninstallHosts,
@@ -440,6 +460,10 @@ export default function MitmPanel() {
                 />
                 下一席位
               </button>
+              <IInfoTooltip size={12} maxWidth={240}>
+                立即手动切换到号池里的下一个可用账号（平时额度用尽会自动切，
+                这里是手动加速）。
+              </IInfoTooltip>
               <IToggle
                 modelValue={Boolean(status?.running)}
                 onValueChange={handleToggle}
@@ -669,8 +693,13 @@ export default function MitmPanel() {
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="text-[13px] font-bold text-ios-text dark:text-ios-textDark">
+                      <div className="flex items-center text-[13px] font-bold text-ios-text dark:text-ios-textDark">
                         {item.title}
+                        {item.tip ? (
+                          <IInfoTooltip size={12} maxWidth={260}>
+                            {item.tip}
+                          </IInfoTooltip>
+                        ) : null}
                       </div>
                       <div className="text-[11px] text-ios-textSecondary dark:text-ios-textSecondaryDark mt-0.5">
                         {item.ready ? item.sR : item.sP}
@@ -785,8 +814,12 @@ export default function MitmPanel() {
                         </span>
                       ) : null}
                       {k.runtime_exhausted ? (
-                        <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300">
-                          RUNTIME EXHAUSTED
+                        <span className="inline-flex items-center rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold tracking-wide text-amber-700 dark:text-amber-300">
+                          额度用尽
+                          <IInfoTooltip size={11} maxWidth={240}>
+                            这个账号本周期额度已用完，已被自动跳过、不再分配新对话。
+                            等官方额度刷新或你手动刷新额度后会自动恢复可用。
+                          </IInfoTooltip>
                         </span>
                       ) : null}
                     </div>

@@ -2,8 +2,8 @@ import { useEffect } from "react";
 import { resolveConfirm, useConfirmState } from "../../utils/toast";
 
 /**
- * IConfirm — React 重构占位（Day 2 完整迁移到 Vue 版样式）。
- * 当前最小可用：Esc 取消 / Enter 确认 / 背景遮罩 + 主按钮。
+ * IConfirm — 全局确认对话框。Esc 取消 / Enter 确认 / 背景遮罩 + 主按钮，
+ * destructive 操作用红色主按钮。
  */
 export default function IConfirm() {
   const state = useConfirmState();

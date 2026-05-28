@@ -86,10 +86,10 @@ func DarwinBatchTeardown() error {
 		}
 	}
 
-	// ② 卸载 CA（仅当钥匙串中确实存在时）
-	certPath := caCertPath()
-	if IsCAInstalled() {
-		cmds = append(cmds, fmt.Sprintf("/usr/bin/security remove-trusted-cert -d %s", shellQuote(certPath)))
+	// ② 卸载 CA（仅当钥匙串中确实存在时）：撤 trust + 循环删证书条目,
+	//    根治"装上去删不掉"/ 重复安装堆积多张同名证书。
+	if IsCAInstalled() || darwinCertStillInKeychain() {
+		cmds = append(cmds, darwinCAClearScript())
 	}
 
 	// ③ 刷新 DNS

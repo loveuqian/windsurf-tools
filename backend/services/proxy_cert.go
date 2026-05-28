@@ -258,13 +258,16 @@ func UninstallCA() error {
 			return fmt.Errorf("卸载 CA 失败: %s\n%s", err, string(output))
 		}
 	case "darwin":
-		certPath := caCertPath()
-		output, err := runCommandWithPrivilege("security", "remove-trusted-cert", "-d", certPath)
-		if err != nil {
-			// 证书可能已被手动移除；忽略 not found 错误
-			if !strings.Contains(string(output), "SecTrustSettingsRemoveTrustSettings") {
-				return fmt.Errorf("卸载 CA 失败: %s\n%s", err, string(output))
-			}
+		// 一次提权完成:撤 trust + 循环删证书条目(根治"装上去删不掉"——
+		// 旧实现只 remove-trusted-cert 撤 trust,证书条目永远留在钥匙串,且
+		// 重复安装会堆积多张同名证书)。
+		if _, err := runShellScriptWithPrivilege(darwinCAClearScript()); err != nil {
+			return fmt.Errorf("卸载 CA 失败: %w", err)
+		}
+		// 真正校验:证书条目确实已不在钥匙串才算成功(不再吞 SecTrustSettings 错误)。
+		InvalidateCACache()
+		if darwinCertStillInKeychain() {
+			return fmt.Errorf("卸载 CA 失败:证书仍在系统钥匙串中(可能密码未输入或权限不足)")
 		}
 	default:
 		dstFile := "/usr/local/share/ca-certificates/windsurf-tools-ca.crt"
@@ -272,6 +275,24 @@ func UninstallCA() error {
 		_, _ = runCommandWithPrivilege("update-ca-certificates", "--fresh")
 	}
 	return nil
+}
+
+// darwinCAClearScript 返回一段在 root 上下文执行的 shell 脚本:先 best-effort 撤
+// trust,再循环 delete-certificate 清掉 System.keychain 里所有同名证书条目。
+// delete-certificate 是钥匙串操作、不依赖 macOS 14+ 下有问题的 SecTrustSettings
+// API,osascript 的 root 上下文即可生效,无需额外开 Terminal 窗口。
+func darwinCAClearScript() string {
+	certPath := caCertPath()
+	return fmt.Sprintf(`/usr/bin/security remove-trusted-cert -d %s >/dev/null 2>&1 || true
+while /usr/bin/security find-certificate -c "Windsurf Tools CA" /Library/Keychains/System.keychain >/dev/null 2>&1; do
+  /usr/bin/security delete-certificate -c "Windsurf Tools CA" /Library/Keychains/System.keychain >/dev/null 2>&1 || break
+done`, shellQuote(certPath))
+}
+
+// darwinCertStillInKeychain 检查 System.keychain 里是否仍有我们的 CA 证书条目。
+func darwinCertStillInKeychain() bool {
+	return exec.Command("security", "find-certificate", "-c", "Windsurf Tools CA",
+		"/Library/Keychains/System.keychain").Run() == nil
 }
 
 var (

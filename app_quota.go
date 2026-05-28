@@ -18,7 +18,9 @@ import (
 
 func (a *App) startAutoRefresh() {
 	ctx, cancel := context.WithCancel(a.ctx)
+	a.mu.Lock()
 	a.cancelAutoRefresh = cancel
+	a.mu.Unlock()
 	go func() {
 		ticker := time.NewTicker(10 * time.Minute)
 		defer ticker.Stop()
@@ -35,7 +37,9 @@ func (a *App) startAutoRefresh() {
 
 func (a *App) startAutoQuotaRefresh() {
 	ctx, cancel := context.WithCancel(a.ctx)
+	a.mu.Lock()
 	a.cancelAutoQuotaRefresh = cancel
+	a.mu.Unlock()
 	log.Printf("[额度同步] 定时同步已启动 (间隔=5min)")
 	utils.DLog("[额度同步] 定时同步已启动 (间隔=5min)")
 	go func() {
@@ -142,9 +146,12 @@ func runAccountRefreshBatchesWithProgress(
 }
 
 func (a *App) stopQuotaHotPoll() {
-	if a.cancelQuotaHotPoll != nil {
-		a.cancelQuotaHotPoll()
-		a.cancelQuotaHotPoll = nil
+	a.mu.Lock()
+	cancel := a.cancelQuotaHotPoll
+	a.cancelQuotaHotPoll = nil
+	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 }
 
@@ -160,7 +167,9 @@ func (a *App) restartQuotaHotPollIfNeeded() {
 		return
 	}
 	ctx, cancel := context.WithCancel(a.ctx)
+	a.mu.Lock()
 	a.cancelQuotaHotPoll = cancel
+	a.mu.Unlock()
 	go a.quotaHotPollLoop(ctx)
 }
 

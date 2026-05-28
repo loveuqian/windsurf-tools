@@ -27,38 +27,38 @@ import (
 
 // RotationPoolStatus 给前端状态面板用。
 type RotationPoolStatus struct {
-	Enabled              bool   `json:"enabled"`
-	MemberCount          int    `json:"member_count"`
-	IntervalMin          int    `json:"interval_min"`
-	QuotaRefreshMin      int    `json:"quota_refresh_min"`
-	NextSwitchAt         string `json:"next_switch_at,omitempty"`         // RFC3339；未启用为空
-	LastSwitchedTo       string `json:"last_switched_to,omitempty"`       // 账号 email/key 简介
-	LastSwitchedAt       string `json:"last_switched_at,omitempty"`
-	LastQuotaRefreshAt   string `json:"last_quota_refresh_at,omitempty"`
-	LastError            string `json:"last_error,omitempty"`
-	TotalSwitches        int    `json:"total_switches"`
-	TotalQuotaRefreshes  int    `json:"total_quota_refreshes"`
+	Enabled             bool   `json:"enabled"`
+	MemberCount         int    `json:"member_count"`
+	IntervalMin         int    `json:"interval_min"`
+	QuotaRefreshMin     int    `json:"quota_refresh_min"`
+	NextSwitchAt        string `json:"next_switch_at,omitempty"`   // RFC3339；未启用为空
+	LastSwitchedTo      string `json:"last_switched_to,omitempty"` // 账号 email/key 简介
+	LastSwitchedAt      string `json:"last_switched_at,omitempty"`
+	LastQuotaRefreshAt  string `json:"last_quota_refresh_at,omitempty"`
+	LastError           string `json:"last_error,omitempty"`
+	TotalSwitches       int    `json:"total_switches"`
+	TotalQuotaRefreshes int    `json:"total_quota_refreshes"`
 	// PausedByPin 表示当前因 ManualPin 暂停定时切，但 manager 仍在运行
 	PausedByPin bool `json:"paused_by_pin"`
 }
 
 // rotationPoolState 内部统计 + ticker 引用，受 mu 保护。
 type rotationPoolState struct {
-	mu                   sync.RWMutex
-	enabled              bool
-	memberIDs            []string
-	intervalMin          int
-	quotaRefreshMin      int
-	switchTicker         *time.Ticker
-	quotaTicker          *time.Ticker
-	cancel               context.CancelFunc
-	lastSwitchedTo       string
-	lastSwitchedAt       time.Time
-	lastQuotaRefreshAt   time.Time
-	lastError            string
-	totalSwitches        int
-	totalQuotaRefreshes  int
-	nextSwitchAt         time.Time
+	mu                  sync.RWMutex
+	enabled             bool
+	memberIDs           []string
+	intervalMin         int
+	quotaRefreshMin     int
+	switchTicker        *time.Ticker
+	quotaTicker         *time.Ticker
+	cancel              context.CancelFunc
+	lastSwitchedTo      string
+	lastSwitchedAt      time.Time
+	lastQuotaRefreshAt  time.Time
+	lastError           string
+	totalSwitches       int
+	totalQuotaRefreshes int
+	nextSwitchAt        time.Time
 }
 
 // applyRotationPoolSettings 根据 settings 启停 RotationPool。在 initBackend /
@@ -198,6 +198,10 @@ func (a *App) rotationPoolSwitchOnce(reason string) (string, error) {
 	if a.rotationPool == nil || a.store == nil {
 		return "", fmt.Errorf("rotation pool not initialized")
 	}
+	// 与其它自动切号入口共用 switchMu 串行化:定时 tick 与用户「立即切换」
+	// 撞在同一秒时不会并发选号/并发 SwitchToKey 争抢 currentIdx。
+	a.switchMu.Lock()
+	defer a.switchMu.Unlock()
 	s := a.store.GetSettings()
 	if !s.RotationPoolEnabled {
 		return "", fmt.Errorf("rotation pool disabled")
@@ -217,12 +221,27 @@ func (a *App) rotationPoolSwitchOnce(reason string) (string, error) {
 	currentID := findAccountIDForMITMAPIKey(a.store.GetAllAccounts(), a.mitmProxy.CurrentAPIKey())
 	target := pickNextRotationPoolMember(a.store.GetAllAccounts(), members, currentID, a.shouldBypassQuotaCheck())
 	if target == nil {
+		// 候选全部按缓存额度判为耗尽。可能是跨日/跨周后官方额度已重置但本地缓存
+		// 未刷新 → 主动拉一次池内额度再重试一次,避免把可恢复的号永久判死。
+		utils.DLog("[RotationPool] %s切换: 候选按缓存全耗尽,主动刷新额度后重试", reason)
+		a.rotationPoolRefreshQuotas()
+		target = pickNextRotationPoolMember(a.store.GetAllAccounts(), members, currentID, a.shouldBypassQuotaCheck())
+	}
+	if target == nil {
+		// ★ 即便失败也推进 nextSwitchAt,否则 UI「下次切换时间」永远停在过去,
+		//   且 ticker 下个周期还会再触发(届时额度可能已恢复)。
+		a.rotationPool.mu.Lock()
+		a.rotationPool.nextSwitchAt = time.Now().Add(time.Duration(a.rotationPool.intervalMin) * time.Minute)
+		a.rotationPool.mu.Unlock()
 		err := fmt.Errorf("池内没有可切的可用账号 (当前=%s 成员=%d)", currentID[:min(8, len(currentID))], len(members))
 		a.recordRotationPoolError(err.Error())
 		return "", err
 	}
 
 	res, err := a.switchMitmAccountAndSyncLocalSession(*target)
+	if err == nil {
+		a.lastAutoSwitchAt = time.Now() // 与其它入口共用去重时间戳(已持 switchMu)
+	}
 	a.rotationPool.mu.Lock()
 	a.rotationPool.nextSwitchAt = time.Now().Add(time.Duration(a.rotationPool.intervalMin) * time.Minute)
 	if err == nil {

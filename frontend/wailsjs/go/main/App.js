@@ -26,6 +26,10 @@ export function AutoSetupClash() {
   return window['go']['main']['App']['AutoSetupClash']();
 }
 
+export function Candidates() {
+  return window['go']['main']['App']['Candidates']();
+}
+
 export function CleanupAllSafe() {
   return window['go']['main']['App']['CleanupAllSafe']();
 }

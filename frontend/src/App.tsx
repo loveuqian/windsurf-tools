@@ -1,4 +1,4 @@
-import { useEffect, type ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import Header from "./components/layout/Header";
 import Sidebar from "./components/layout/Sidebar";
 import AppFooter from "./components/layout/AppFooter";
@@ -9,6 +9,9 @@ import CommandPalette from "./components/CommandPalette";
 import HotkeysCheatSheet from "./components/HotkeysCheatSheet";
 import IContextMenuPortal from "./components/ios/IContextMenu";
 import TaskDrawer from "./components/TaskDrawer";
+import OnboardingWizard, {
+  shouldShowOnboarding,
+} from "./components/OnboardingWizard";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useDockBadge } from "./hooks/useDockBadge";
 import { useGlobalHotkeys } from "./hooks/useGlobalHotkeys";
@@ -63,6 +66,18 @@ export default function App() {
   const setActiveTab = useMainViewStore((s) => s.setActiveTab);
   const importModalOpen = useMainViewStore((s) => s.importModalOpen);
   const closeImportModal = useMainViewStore((s) => s.closeImportModal);
+
+  // 首次启动全屏引导（看完写 localStorage 标志，之后不再出现）
+  const [showOnboarding, setShowOnboarding] = useState(() =>
+    shouldShowOnboarding(),
+  );
+  const handleOnboardingClose = (goImport: boolean) => {
+    setShowOnboarding(false);
+    if (goImport) {
+      useMainViewStore.getState().setActiveTab("Accounts");
+      useMainViewStore.getState().openImportModal();
+    }
+  };
 
   // 启动数据加载：settings → 账号 → MITM 状态
   useEffect(() => {
@@ -148,6 +163,9 @@ export default function App() {
       <CommandPalette />
       <HotkeysCheatSheet />
       <IContextMenuPortal />
+      {showOnboarding ? (
+        <OnboardingWizard onClose={handleOnboardingClose} />
+      ) : null}
     </div>
   );
 }

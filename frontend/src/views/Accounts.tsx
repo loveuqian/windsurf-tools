@@ -6,9 +6,11 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
-  Clock,
+  CheckSquare,
   Download,
   KeyRound,
+  LayoutGrid,
+  List,
   Lock,
   LogIn,
   MoreHorizontal,
@@ -19,10 +21,12 @@ import {
   ShieldCheck,
   Shuffle,
   Sparkles,
+  Square,
   Trash2,
   Unlock,
   UserX,
   Users,
+  Wallet,
   X,
 } from "lucide-react";
 import { APIInfo } from "../api/wails";
@@ -54,7 +58,6 @@ import { PRIMARY_POOL_LABEL } from "../utils/appMode";
 import {
   formatDateTimeAsiaShanghai,
   formatResetCountdownZH,
-  formatSyncTimeLine,
 } from "../utils/datetimeAsia";
 import {
   computeMitmPoolStatus,
@@ -154,6 +157,13 @@ function parseQuotaWidth(str: string): string {
   return `${n}%`;
 }
 
+/** micros(百万分之一美元)→ "$x.xx" 显示串。 */
+function formatExtraUsageBalance(micros?: number): string {
+  const v = (micros ?? 0) / 1_000_000;
+  const sign = v < 0 ? "-" : "";
+  return `${sign}$${Math.abs(v).toFixed(2)}`;
+}
+
 /**
  * Accounts view — Vue 1:1 完整迁移。
  *
@@ -197,6 +207,17 @@ export default function Accounts() {
   const [pageSize, setPageSize] = useState<number>(60);
   const [currentPage, setCurrentPage] = useState(1);
   const [planGroupFilter, setPlanGroupFilter] = useState<string>("");
+  // 多选批量操作:选中账号 id 集合 + 视图模式
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<"card" | "table">(() => {
+    try {
+      return localStorage.getItem("wt_accounts_view") === "table"
+        ? "table"
+        : "card";
+    } catch {
+      return "card";
+    }
+  });
   // D-B: 顶部 MITM 池准入 chip 组的折叠状态 + 保存中标志
   const [planPoolExpanded, setPlanPoolExpanded] = useState(false);
   const [planPoolSaving, setPlanPoolSaving] = useState(false);
@@ -222,6 +243,15 @@ export default function Accounts() {
   useEffect(() => {
     setCurrentPage(1);
   }, [activeTab, quickFilter, searchQuery, accountSort]);
+
+  // 记住卡片/表格视图选择
+  useEffect(() => {
+    try {
+      localStorage.setItem("wt_accounts_view", viewMode);
+    } catch {
+      /* ignore */
+    }
+  }, [viewMode]);
 
   // 1.5: 跨视图跳转 → 清筛选保证目标卡可见 + 滚动 + 1.6s 后清 store。
   useEffect(() => {
@@ -854,6 +884,16 @@ export default function Accounts() {
     }
   };
 
+  // ── 多选批量操作 ──
+  const toggleSelected = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const clearSelection = () => setSelectedIds(new Set());
+
   const copyApiKey = async (acc: models.Account) => {
     const key = String(acc.windsurf_api_key || "").trim();
     if (!key) {
@@ -874,6 +914,92 @@ export default function Accounts() {
     if (!planGroupFilter) return 0;
     return accountAgg.counts[planGroupFilter as SwitchPlanTone] ?? 0;
   }, [planGroupFilter, accountAgg]);
+
+  // 选中变化时,自动剔除已不在当前筛选结果里的 id(避免误删隐藏账号)
+  useEffect(() => {
+    if (selectedIds.size === 0) return;
+    const visible = new Set(displayAccounts.map((a) => a.id));
+    setSelectedIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (visible.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayAccounts]);
+
+  const allPageSelected =
+    pagedAccounts.length > 0 &&
+    pagedAccounts.every((a) => selectedIds.has(a.id));
+  const toggleSelectAllPage = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allPageSelected) {
+        for (const a of pagedAccounts) next.delete(a.id);
+      } else {
+        for (const a of pagedAccounts) next.add(a.id);
+      }
+      return next;
+    });
+  };
+
+  const handleBulkDelete = async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    const ok = await confirmDialog(
+      `将永久删除选中的 ${ids.length} 个账号，不可恢复。`,
+      { confirmText: "删除", cancelText: "取消", destructive: true },
+    );
+    if (!ok) return;
+    let done = 0;
+    for (const id of ids) {
+      try {
+        await useAccountStore.getState().deleteAccount(id);
+        done++;
+      } catch {
+        /* 单个失败不中断整体 */
+      }
+    }
+    await useAccountStore.getState().fetchAccounts(true);
+    clearSelection();
+    showToast(
+      done === ids.length
+        ? `已删除 ${done} 个账号`
+        : `已删除 ${done}/${ids.length} 个，部分失败`,
+      done === ids.length ? "success" : "warning",
+    );
+  };
+
+  // 批量加入/移出轮换池:一次 updateSettings 写回,避免逐个请求
+  const handleBulkRotationPool = async (add: boolean) => {
+    const s = settings;
+    if (!s) return;
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    const set = new Set(s.rotation_pool_account_ids || []);
+    if (add) ids.forEach((id) => set.add(id));
+    else ids.forEach((id) => set.delete(id));
+    try {
+      await APIInfo.updateSettings({
+        ...s,
+        rotation_pool_account_ids: [...set],
+      } as models.Settings);
+      await useSettingsStore.getState().fetchSettings(true);
+      showToast(
+        add
+          ? `已把 ${ids.length} 个账号加入轮换池`
+          : `已把 ${ids.length} 个账号移出轮换池`,
+        "success",
+      );
+      clearSelection();
+    } catch (e) {
+      showErrorToast(e, "批量修改轮换池失败");
+    }
+  };
+
 
   const planGroupOptions = useMemo(
     () => [
@@ -1111,14 +1237,13 @@ export default function Accounts() {
   return (
     <div className="p-6 md:p-8 flex flex-1 flex-col max-w-6xl mx-auto w-full min-h-0">
       {/* ── 顶部工具栏 ── */}
-      <div className="flex flex-wrap items-start justify-between gap-4 mb-5 shrink-0">
+      <div className="flex flex-wrap items-start justify-between gap-4 mb-4 shrink-0">
         <div className="min-w-0">
           <h1 className="text-[28px] sm:text-[32px] font-bold tracking-tight">
             {PRIMARY_POOL_LABEL}
           </h1>
           <p className="text-[13px] text-ios-textSecondary dark:text-ios-textSecondaryDark mt-1 leading-relaxed max-w-[640px]">
-            粘贴 API Key / JWT / 邮箱密码即可一键入池。导入完成后，MITM 代理会自动接管 IDE
-            流量并按额度无感切号。
+            粘贴 API Key / JWT / 邮箱密码一键入池，MITM 代理自动接管 IDE 流量、按额度无感切号。
           </p>
           {/* F7-REMOVAL: 整行 <F7Banner/> 删除 */}
           <F7Banner variant="compact" />
@@ -1165,7 +1290,7 @@ export default function Accounts() {
       </div>
 
       {/* ── plan tabs ── */}
-      <div className="flex items-center gap-2 mb-4 overflow-x-auto no-scrollbar shrink-0 pb-1">
+      <div className="flex items-center gap-2 mb-3 overflow-x-auto no-scrollbar shrink-0 pb-1">
         {tabsList.map((tab) => {
           const active = activeTab === tab.key;
           return (
@@ -1195,13 +1320,13 @@ export default function Accounts() {
       </div>
 
       {/* ── P2: RotationPool 状态卡（仅 enabled 时显示） ── */}
-      <div className="mb-4 shrink-0">
+      <div className="mb-3 shrink-0">
         <RotationPoolStatusCard />
       </div>
 
       {/* ── D-B: MITM 号池准入计划 chip 组（默认折叠，summary 行可展开） ── */}
       {accounts.length > 0 ? (
-        <div className="mb-5 shrink-0">
+        <div className="mb-3 shrink-0">
           <button
             type="button"
             onClick={() => setPlanPoolExpanded((v) => !v)}
@@ -1240,7 +1365,7 @@ export default function Accounts() {
 
       {/* ── quick filter chips ── */}
       {accounts.length > 0 ? (
-        <div className="mb-5 flex flex-wrap items-center gap-2 shrink-0">
+        <div className="mb-3 flex flex-wrap items-center gap-2 shrink-0">
           {quickFilterOptions.map((item) => {
             const active = quickFilter === item.key;
             return (
@@ -1272,7 +1397,7 @@ export default function Accounts() {
 
       {/* ── 搜索 + 排序 + 分组操作 ── */}
       {accounts.length > 0 ? (
-        <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3 mb-6 shrink-0 max-w-6xl">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3 mb-3 shrink-0 max-w-6xl">
           <div className="relative flex-1 min-w-[220px]">
             <Search
               className="absolute left-3.5 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-ios-textSecondary dark:text-ios-textSecondaryDark opacity-60 pointer-events-none"
@@ -1295,6 +1420,7 @@ export default function Accounts() {
               </button>
             ) : null}
           </div>
+          <div className="flex items-center gap-2">
           <ISelectSheet
             modelValue={accountSort}
             onValueChange={(v) =>
@@ -1304,6 +1430,34 @@ export default function Accounts() {
             title="账号排序方式"
             width="w-44"
           />
+          {/* 视图切换:卡片 / 表格 */}
+          <div className="no-drag-region inline-flex items-center rounded-[14px] border border-black/[0.06] bg-black/[0.04] p-0.5 dark:border-white/[0.08] dark:bg-white/[0.06]">
+            <button
+              type="button"
+              title="卡片视图"
+              onClick={() => setViewMode("card")}
+              className={`inline-flex h-9 w-9 items-center justify-center rounded-[11px] transition-colors ${
+                viewMode === "card"
+                  ? "bg-white text-ios-blue shadow-sm dark:bg-white/15 dark:text-blue-300"
+                  : "text-ios-textSecondary dark:text-ios-textSecondaryDark"
+              }`}
+            >
+              <LayoutGrid className="h-[18px] w-[18px]" strokeWidth={2.4} />
+            </button>
+            <button
+              type="button"
+              title="表格视图(紧凑)"
+              onClick={() => setViewMode("table")}
+              className={`inline-flex h-9 w-9 items-center justify-center rounded-[11px] transition-colors ${
+                viewMode === "table"
+                  ? "bg-white text-ios-blue shadow-sm dark:bg-white/15 dark:text-blue-300"
+                  : "text-ios-textSecondary dark:text-ios-textSecondaryDark"
+              }`}
+            >
+              <List className="h-[18px] w-[18px]" strokeWidth={2.4} />
+            </button>
+          </div>
+          </div>
           <div
             className="flex items-center gap-1.5 sm:ml-auto"
             title="先选套餐类型，再按删除 / 导出该组"
@@ -1345,6 +1499,65 @@ export default function Accounts() {
         </div>
       ) : null}
 
+      {/* ── 多选批量操作栏(选中后浮现) ── */}
+      {accounts.length > 0 ? (
+        <div className="mb-3 flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={toggleSelectAllPage}
+            className="no-drag-region inline-flex items-center gap-1.5 rounded-full bg-black/[0.04] px-3 py-1.5 text-[12px] font-bold text-ios-textSecondary dark:text-ios-textSecondaryDark hover:bg-black/[0.08] dark:bg-white/[0.06] dark:hover:bg-white/[0.1]"
+          >
+            {allPageSelected ? (
+              <CheckSquare className="h-3.5 w-3.5" strokeWidth={2.5} />
+            ) : (
+              <Square className="h-3.5 w-3.5" strokeWidth={2.5} />
+            )}
+            {allPageSelected ? "取消全选本页" : "全选本页"}
+          </button>
+          {selectedIds.size > 0 ? (
+            <>
+              <span className="text-[12px] font-bold text-ios-blue">
+                已选 {selectedIds.size} 个
+              </span>
+              <button
+                type="button"
+                onClick={() => void handleBulkRotationPool(true)}
+                className="no-drag-region inline-flex items-center gap-1 rounded-full bg-violet-500/10 px-3 py-1.5 text-[12px] font-bold text-violet-700 dark:text-violet-300 ios-btn hover:bg-violet-500/20 transition-colors"
+              >
+                🔁 加入轮换池
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleBulkRotationPool(false)}
+                className="no-drag-region inline-flex items-center gap-1 rounded-full bg-black/[0.04] px-3 py-1.5 text-[12px] font-bold text-ios-textSecondary dark:text-ios-textSecondaryDark ios-btn hover:bg-black/[0.08] dark:bg-white/[0.06] dark:hover:bg-white/[0.1] transition-colors"
+              >
+                移出轮换池
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleBulkDelete()}
+                className="no-drag-region inline-flex items-center gap-1 rounded-full bg-ios-red/10 px-3 py-1.5 text-[12px] font-bold text-ios-red ios-btn hover:bg-ios-red/20 transition-colors"
+              >
+                <Trash2 className="h-[14px] w-[14px]" strokeWidth={2.5} />
+                批量删除
+              </button>
+              <button
+                type="button"
+                onClick={clearSelection}
+                className="no-drag-region inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-[12px] font-bold text-ios-textSecondary dark:text-ios-textSecondaryDark hover:text-ios-text dark:hover:text-ios-textDark transition-colors"
+              >
+                <X className="h-[14px] w-[14px]" strokeWidth={2.5} />
+                取消选择
+              </button>
+            </>
+          ) : (
+            <span className="text-[11px] text-ios-textSecondary/70 dark:text-ios-textSecondaryDark/70">
+              勾选卡片左上角可批量删除 / 加入轮换池
+            </span>
+          )}
+        </div>
+      ) : null}
+
       {/* ── 整页骨架 / 空状态 / 筛选无结果 / 卡片网格 ── */}
       {!accountHasLoadedOnce && accounts.length === 0 ? (
         <PageLoadingSkeleton variant="accounts" className="flex-1" />
@@ -1372,6 +1585,22 @@ export default function Accounts() {
         </div>
       ) : (
         <div className="pb-10 min-h-0">
+          {viewMode === "table" ? (
+            <AccountsTable
+              accounts={pagedAccounts}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelected}
+              isOnline={isCurrentOnline}
+              isPinned={isAccountPinned}
+              inPool={isAccountInRotationPool}
+              hasApiKey={hasApiKey}
+              isSwitching={isAccountSwitching}
+              switchLoading={switchLoading}
+              onSwitch={handleSwitchMitmToAccount}
+              onLogin={handleLoginToWindsurf}
+              menuItems={accountCardMenuItems}
+            />
+          ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 auto-rows-max">
             {pagedAccounts.map((acc) => {
               if (isAccountCardRefreshing(acc.id)) {
@@ -1386,6 +1615,7 @@ export default function Accounts() {
               // D-C: 池外原因徽标
               const poolStatus = mitmPoolStatusMap.get(acc.id);
               const isHighlighted = highlightAccountId === acc.id;
+              const selected = selectedIds.has(acc.id);
               return (
                 <div
                   key={acc.id}
@@ -1394,15 +1624,34 @@ export default function Accounts() {
                     openContextMenu(e, buildAccountContextMenu(acc))
                   }
                   className={[
-                    "bg-white dark:bg-[#1C1C1E] rounded-[22px] flex flex-col relative overflow-hidden transition-all duration-300 ease-out hover:shadow-lg hover:-translate-y-0.5",
-                    online
-                      ? "border-2 border-ios-green/40 dark:border-ios-greenDark/40 shadow-[0_0_0_1px_rgba(52,199,89,0.12)]"
-                      : "border border-black/[0.05] dark:border-white/[0.08] shadow-sm",
+                    "group bg-white dark:bg-[#1C1C1E] rounded-[22px] flex flex-col relative overflow-hidden transition-all duration-300 ease-out hover:shadow-lg hover:-translate-y-0.5",
+                    selected
+                      ? "border-2 border-ios-blue ring-2 ring-ios-blue/30"
+                      : online
+                        ? "border-2 border-ios-green/40 dark:border-ios-greenDark/40 shadow-[0_0_0_1px_rgba(52,199,89,0.12)]"
+                        : "border border-black/[0.05] dark:border-white/[0.08] shadow-sm",
                     isHighlighted
                       ? "ring-4 ring-ios-blue/50 ring-offset-2 ring-offset-white dark:ring-offset-[#1C1C1E] animate-pulse"
                       : "",
                   ].join(" ")}
                 >
+                  {/* 多选复选框:hover 或已选时显示 */}
+                  <button
+                    type="button"
+                    title={selected ? "取消选择" : "选择此账号"}
+                    onClick={() => toggleSelected(acc.id)}
+                    className={`no-drag-region absolute left-3 top-3 z-20 flex h-6 w-6 items-center justify-center rounded-md transition-all ${
+                      selected
+                        ? "bg-ios-blue text-white shadow-sm opacity-100"
+                        : "bg-white/90 text-ios-textSecondary opacity-0 hover:bg-white group-hover:opacity-100 dark:bg-black/50 dark:text-ios-textSecondaryDark"
+                    }`}
+                  >
+                    {selected ? (
+                      <CheckSquare className="h-4 w-4" strokeWidth={2.5} />
+                    ) : (
+                      <Square className="h-4 w-4" strokeWidth={2.5} />
+                    )}
+                  </button>
                   <div
                     className={`absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r opacity-95 ${getPlanAccentClass(
                       acc,
@@ -1449,7 +1698,7 @@ export default function Accounts() {
                             className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-amber-500/15 border border-amber-500/30 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300"
                             title="已锁定 — 自动切换通道全部暂停。点击右侧按钮解锁。"
                           >
-                            🔒 已锁定
+                            🔒 锁定
                           </span>
                         ) : null}
                         {inPool ? (
@@ -1509,7 +1758,7 @@ export default function Accounts() {
                       </div>
                     </div>
 
-                    <div className="mt-4 min-w-0">
+                    <div className="mt-3.5 min-w-0">
                       <div
                         className="truncate text-[24px] font-bold tracking-tight text-ios-text dark:text-ios-textDark"
                         title={acc.nickname || acc.email || acc.id}
@@ -1517,15 +1766,15 @@ export default function Accounts() {
                         {acc.nickname || acc.email || acc.id.slice(0, 12)}
                       </div>
                       <div
-                        className="mt-2 truncate text-[13px] font-medium text-gray-600 dark:text-gray-300"
+                        className="mt-1.5 truncate text-[13px] font-medium text-gray-600 dark:text-gray-300"
                         title={acc.email || "未填写邮箱"}
                       >
                         {acc.email || "未填写邮箱"}
                       </div>
                       {acc.remark ? (
-                        <div className="mt-3 flex flex-wrap gap-2">
+                        <div className="mt-2.5 flex flex-wrap gap-2">
                           <span
-                            className="rounded-full bg-black/[0.04] px-2.5 py-1 text-[10px] font-semibold text-ios-textSecondary dark:text-ios-textSecondaryDark dark:bg-white/[0.08] "
+                            className="max-w-full truncate rounded-full bg-black/[0.04] px-2.5 py-1 text-[10px] font-medium text-ios-textSecondary/90 dark:text-ios-textSecondaryDark/90 dark:bg-white/[0.06]"
                             title={acc.remark}
                           >
                             {acc.remark}
@@ -1534,13 +1783,13 @@ export default function Accounts() {
                       ) : null}
                     </div>
 
-                    <div className="mt-4 grid grid-cols-2 gap-3">
-                      <div className="rounded-[18px] border border-black/[0.05] bg-black/[0.025] p-3 dark:border-white/[0.06] dark:bg-white/[0.04]">
-                        <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-ios-textSecondary dark:text-ios-textSecondaryDark">
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      <div className="rounded-[16px] border border-black/[0.05] bg-black/[0.025] px-3 py-2.5 dark:border-white/[0.06] dark:bg-white/[0.04]">
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-ios-textSecondary dark:text-ios-textSecondaryDark">
                           <CalendarDays className="h-3.5 w-3.5 opacity-70" />
                           到期时间
                         </div>
-                        <div className="mt-2 text-[13px] font-semibold leading-snug text-ios-text dark:text-ios-textDark">
+                        <div className="mt-1.5 text-[13px] font-semibold leading-snug text-ios-text dark:text-ios-textDark">
                           {acc.subscription_expires_at
                             ? formatDateTimeAsiaShanghai(
                                 acc.subscription_expires_at,
@@ -1549,36 +1798,45 @@ export default function Accounts() {
                         </div>
                       </div>
 
-                      <div className="rounded-[18px] border border-black/[0.05] bg-black/[0.025] p-3 dark:border-white/[0.06] dark:bg-white/[0.04]">
-                        <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-ios-textSecondary dark:text-ios-textSecondaryDark">
-                          <Clock className="h-3.5 w-3.5 opacity-70" />
-                          额度同步
+                      <div className="rounded-[16px] border border-black/[0.05] bg-black/[0.025] px-3 py-2.5 dark:border-white/[0.06] dark:bg-white/[0.04]">
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-ios-textSecondary dark:text-ios-textSecondaryDark">
+                          <Wallet className="h-3.5 w-3.5 opacity-70" />
+                          额外余额
                         </div>
-                        <div className="mt-2 text-[13px] font-semibold leading-snug text-ios-text dark:text-ios-textDark">
-                          {acc.last_quota_update
-                            ? formatSyncTimeLine(acc.last_quota_update)
-                            : "未同步"}
-                        </div>
-                        {acc.last_quota_update ? (
-                          <div
-                            className="mt-1 truncate text-[10px] text-gray-500 dark:text-gray-400"
-                            title={formatDateTimeAsiaShanghai(
-                              acc.last_quota_update,
-                            )}
-                          >
-                            {formatDateTimeAsiaShanghai(acc.last_quota_update)}
+                        {acc.has_extra_usage_balance ? (
+                          <>
+                            <div
+                              className={`mt-1.5 text-[15px] font-bold leading-snug ${
+                                (acc.extra_usage_balance_micros ?? 0) > 0
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : "text-gray-400 dark:text-gray-500"
+                              }`}
+                            >
+                              {formatExtraUsageBalance(
+                                acc.extra_usage_balance_micros,
+                              )}
+                            </div>
+                            <div className="mt-0.5 text-[10px] text-gray-500/90 dark:text-gray-400/90">
+                              {(acc.extra_usage_balance_micros ?? 0) > 0
+                                ? "周额度用完后可付费兜底"
+                                : "已用尽 / 无兜底"}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="mt-1.5 text-[13px] font-semibold leading-snug text-gray-400 dark:text-gray-500">
+                            未开通
                           </div>
-                        ) : null}
+                        )}
                       </div>
                     </div>
 
-                    <div className="mt-4 rounded-[18px] border border-black/[0.05] bg-black/[0.025] p-4 dark:border-white/[0.06] dark:bg-white/[0.04]">
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between text-[11px] font-bold text-gray-800 dark:text-gray-200">
+                    <div className="mt-3 rounded-[18px] border border-black/[0.05] bg-black/[0.025] p-4 dark:border-white/[0.06] dark:bg-white/[0.04]">
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-[12px] font-bold text-gray-800 dark:text-gray-200">
                           <span>日额度</span>
-                          <span>{acc.daily_remaining || "—"}</span>
+                          <span className="tabular-nums">{acc.daily_remaining || "—"}</span>
                         </div>
-                        <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-white/10">
+                        <div className="h-2.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-white/10">
                           <div
                             className={`h-full rounded-full transition-all duration-500 ease-out ${getQuotaColor(
                               acc.daily_remaining || "",
@@ -1588,7 +1846,7 @@ export default function Accounts() {
                         </div>
                         {acc.daily_reset_at ? (
                           <div
-                            className="truncate pt-1 text-[10px] font-medium text-gray-500 dark:text-gray-400"
+                            className="truncate pt-0.5 text-[10px] font-normal text-gray-400 dark:text-gray-500"
                             title={formatDateTimeAsiaShanghai(acc.daily_reset_at)}
                           >
                             {formatResetCountdownZH(acc.daily_reset_at)}
@@ -1596,15 +1854,15 @@ export default function Accounts() {
                         ) : null}
                       </div>
 
-                      <div className="mt-4 space-y-1.5">
-                        <div className="flex items-center justify-between text-[11px] font-bold text-gray-800 dark:text-gray-200">
+                      <div className="mt-3.5 space-y-2">
+                        <div className="flex items-center justify-between text-[12px] font-bold text-gray-800 dark:text-gray-200">
                           <span>周额度</span>
-                          <span>
+                          <span className="tabular-nums">
                             {acc.weekly_remaining ||
                               (isWeeklyBlockedDisplay(acc) ? "官方缺失" : "—")}
                           </span>
                         </div>
-                        <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-white/10">
+                        <div className="h-2.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-white/10">
                           <div
                             className={`h-full rounded-full transition-all duration-500 ease-out ${getQuotaColor(
                               acc.weekly_remaining || "",
@@ -1614,7 +1872,7 @@ export default function Accounts() {
                         </div>
                         {acc.weekly_reset_at ? (
                           <div
-                            className="truncate pt-1 text-[10px] font-medium text-gray-500 dark:text-gray-400"
+                            className="truncate pt-0.5 text-[10px] font-normal text-gray-400 dark:text-gray-500"
                             title={formatDateTimeAsiaShanghai(acc.weekly_reset_at)}
                           >
                             {formatResetCountdownZH(acc.weekly_reset_at)}
@@ -1632,6 +1890,7 @@ export default function Accounts() {
               );
             })}
           </div>
+          )}
 
           {totalPages > 1 || displayAccounts.length > 30 ? (
             <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
@@ -1694,6 +1953,197 @@ interface EmptyStateProps {
   onEnableMitm: () => void;
   onFinish: () => void;
   onRelay: () => void;
+}
+
+// ── 表格(紧凑)视图 ──
+
+interface AccountsTableProps {
+  accounts: models.Account[];
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
+  isOnline: (acc: models.Account) => boolean;
+  isPinned: (acc: models.Account) => boolean;
+  inPool: (acc: models.Account) => boolean;
+  hasApiKey: (acc: models.Account) => boolean;
+  isSwitching: (id: string) => boolean;
+  switchLoading: boolean;
+  onSwitch: (acc: models.Account) => void;
+  onLogin: (acc: models.Account) => void;
+  menuItems: (acc: models.Account) => DropdownItem[];
+}
+
+function quotaTextTone(s?: string): string {
+  const n = parseFloat(String(s ?? "").replace("%", "").trim());
+  if (!Number.isFinite(n)) return "text-gray-400 dark:text-gray-500";
+  if (n <= 0.01) return "text-rose-600 dark:text-rose-400 font-bold";
+  if (n < 20) return "text-amber-600 dark:text-amber-400 font-semibold";
+  return "text-ios-text dark:text-ios-textDark";
+}
+
+function AccountsTable({
+  accounts,
+  selectedIds,
+  onToggleSelect,
+  isOnline,
+  isPinned,
+  inPool,
+  hasApiKey,
+  isSwitching,
+  switchLoading,
+  onSwitch,
+  onLogin,
+  menuItems,
+}: AccountsTableProps) {
+  return (
+    <div className="overflow-x-auto rounded-[18px] border border-black/[0.06] dark:border-white/[0.08]">
+      <table className="w-full min-w-[860px] border-collapse text-[13px]">
+        <thead>
+          <tr className="border-b border-black/[0.06] bg-black/[0.02] text-left text-[11px] font-bold uppercase tracking-wide text-ios-textSecondary dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-ios-textSecondaryDark">
+            <th className="w-10 px-3 py-2.5"></th>
+            <th className="px-3 py-2.5">账号</th>
+            <th className="px-3 py-2.5">套餐</th>
+            <th className="px-3 py-2.5 text-right">日额度</th>
+            <th className="px-3 py-2.5 text-right">周额度</th>
+            <th className="px-3 py-2.5 text-right">额外余额</th>
+            <th className="px-3 py-2.5">状态</th>
+            <th className="px-3 py-2.5 text-right">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {accounts.map((acc) => {
+            const online = isOnline(acc);
+            const selected = selectedIds.has(acc.id);
+            return (
+              <tr
+                key={acc.id}
+                className={`border-b border-black/[0.04] transition-colors last:border-0 dark:border-white/[0.05] ${
+                  selected
+                    ? "bg-ios-blue/[0.06]"
+                    : "hover:bg-black/[0.02] dark:hover:bg-white/[0.03]"
+                }`}
+              >
+                <td className="px-3 py-2.5">
+                  <button
+                    type="button"
+                    onClick={() => onToggleSelect(acc.id)}
+                    className={`flex h-5 w-5 items-center justify-center rounded ${
+                      selected
+                        ? "bg-ios-blue text-white"
+                        : "text-ios-textSecondary dark:text-ios-textSecondaryDark"
+                    }`}
+                    title={selected ? "取消选择" : "选择"}
+                  >
+                    {selected ? (
+                      <CheckSquare className="h-4 w-4" strokeWidth={2.5} />
+                    ) : (
+                      <Square className="h-4 w-4" strokeWidth={2.5} />
+                    )}
+                  </button>
+                </td>
+                <td className="px-3 py-2.5">
+                  <div
+                    className="max-w-[220px] truncate font-semibold text-ios-text dark:text-ios-textDark"
+                    title={acc.email || acc.id}
+                  >
+                    {acc.nickname || acc.email || acc.id.slice(0, 12)}
+                  </div>
+                  {acc.nickname && acc.email ? (
+                    <div className="max-w-[220px] truncate text-[11px] text-gray-500 dark:text-gray-400">
+                      {acc.email}
+                    </div>
+                  ) : null}
+                </td>
+                <td className="px-3 py-2.5">
+                  <span className="rounded-full bg-ios-blue/10 px-2 py-0.5 text-[10px] font-bold text-ios-blue dark:bg-ios-blue/20">
+                    {acc.plan_name || "unknown"}
+                  </span>
+                </td>
+                <td
+                  className={`px-3 py-2.5 text-right tabular-nums ${quotaTextTone(acc.daily_remaining)}`}
+                >
+                  {acc.daily_remaining || "—"}
+                </td>
+                <td
+                  className={`px-3 py-2.5 text-right tabular-nums ${quotaTextTone(acc.weekly_remaining)}`}
+                >
+                  {acc.weekly_remaining || "—"}
+                </td>
+                <td className="px-3 py-2.5 text-right tabular-nums">
+                  {acc.has_extra_usage_balance ? (
+                    <span
+                      className={
+                        (acc.extra_usage_balance_micros ?? 0) > 0
+                          ? "font-semibold text-emerald-600 dark:text-emerald-400"
+                          : "text-gray-400 dark:text-gray-500"
+                      }
+                    >
+                      {formatExtraUsageBalance(acc.extra_usage_balance_micros)}
+                    </span>
+                  ) : (
+                    <span className="text-gray-300 dark:text-gray-600">—</span>
+                  )}
+                </td>
+                <td className="px-3 py-2.5">
+                  <div className="flex flex-wrap items-center gap-1">
+                    {online ? (
+                      <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
+                        活跃
+                      </span>
+                    ) : null}
+                    {isPinned(acc) ? (
+                      <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-300">
+                        🔒
+                      </span>
+                    ) : null}
+                    {inPool(acc) ? (
+                      <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">
+                        🔁
+                      </span>
+                    ) : null}
+                  </div>
+                </td>
+                <td className="px-3 py-2.5">
+                  <div className="flex items-center justify-end gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => onLogin(acc)}
+                      disabled={isSwitching(acc.id)}
+                      className="no-drag-region inline-flex items-center gap-1 rounded-full bg-violet-500/10 px-2.5 py-1 text-[11px] font-bold text-violet-600 dark:text-violet-300 hover:bg-violet-500/15 disabled:opacity-50"
+                      title="写入本地登录态"
+                    >
+                      <LogIn className="h-3.5 w-3.5" strokeWidth={2.5} />
+                    </button>
+                    {hasApiKey(acc) ? (
+                      <button
+                        type="button"
+                        onClick={() => onSwitch(acc)}
+                        disabled={online || switchLoading}
+                        className={`no-drag-region inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold disabled:opacity-45 ${
+                          online
+                            ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 cursor-default"
+                            : "bg-ios-blue/10 text-ios-blue dark:text-blue-300 hover:bg-ios-blue/15"
+                        }`}
+                        title={online ? "当前活跃" : "切到此号"}
+                      >
+                        <ArrowRightLeft className="h-3.5 w-3.5" strokeWidth={2.5} />
+                      </button>
+                    ) : null}
+                    <IDropdownMenu
+                      items={menuItems(acc)}
+                      align="right"
+                      width="w-52"
+                      compact
+                      triggerTitle="更多操作"
+                    />
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 function EmptyState({
@@ -1783,7 +2233,7 @@ function EmptyState({
             </span>
           </div>
           <p className="text-[12px] text-gray-500 dark:text-gray-400 leading-relaxed">
-            Cascade 对话自动按额度无感切号，可选启用轮换池 + Clash 加速。
+            开启代理后，打开或重启 Windsurf 照常对话即可，额度用完会在后台自动换号。
           </p>
           <div className="mt-3 inline-flex items-center gap-1 text-[12px] font-bold text-emerald-600 dark:text-emerald-300 group-hover:gap-1.5 transition-all">
             查看仪表盘

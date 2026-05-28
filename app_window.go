@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 
+	"windsurf-tools-wails/backend/models"
+
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -42,22 +44,21 @@ func (a *App) SaveWindowGeometry(width, height, x, y int, maximized bool) error 
 	if a.store == nil {
 		return nil
 	}
-	prev := a.store.GetSettings()
-	next := prev
-	// 钳制极端值
-	if !maximized {
-		if width < 600 || height < 400 {
-			return nil
-		}
-		next.WindowWidth = width
-		next.WindowHeight = height
-		if x > -10000 && y > -10000 {
-			next.WindowX = x
-			next.WindowY = y
-		}
+	// 钳制极端值;非最大化时窗口过小直接忽略。
+	if !maximized && (width < 600 || height < 400) {
+		return nil
 	}
-	next.WindowMaximized = maximized
-	return a.store.UpdateSettings(next)
+	return a.store.MutateSettings(func(s *models.Settings) {
+		if !maximized {
+			s.WindowWidth = width
+			s.WindowHeight = height
+			if x > -10000 && y > -10000 {
+				s.WindowX = x
+				s.WindowY = y
+			}
+		}
+		s.WindowMaximized = maximized
+	})
 }
 
 // RestoreWindowGeometry 启动时由前端调用，从 settings 还原窗口几何。

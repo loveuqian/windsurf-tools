@@ -23,16 +23,19 @@ import (
 
 // ClashRotatorConfig 由 Settings 映射而来。
 type ClashRotatorConfig struct {
-	ControllerURL    string        // 例: http://127.0.0.1:9097
-	Secret           string        // 可空
-	Group            string        // selector 组名
-	Whitelist        []string      // 节点白名单；空表示用组内所有节点
-	Interval         time.Duration // 轮换间隔，最低 2 分钟
-	RotateOnRL       bool          // 检测到 rate-limit 时立即切
-	LatencyTestURL   string
-	LatencyMaxMs     int           // <=0 表示跳过测延迟
-	IdleWaitMax      time.Duration // 切换前等待 chat 流空闲的最长时间
-	RateLimitMinGap  time.Duration // 两次限速触发的最短间隔（debounce）
+	ControllerURL   string        // 例: http://127.0.0.1:9097
+	Secret          string        // 可空
+	Group           string        // selector 组名
+	Whitelist       []string      // 节点白名单；空表示用组内所有节点
+	Interval        time.Duration // 轮换间隔，最低 2 分钟
+	RotateOnRL      bool          // 检测到 rate-limit 时立即切
+	LatencyTestURL  string
+	LatencyMaxMs    int           // <=0 表示跳过测延迟
+	IdleWaitMax     time.Duration // 切换前等待 chat 流空闲的最长时间
+	RateLimitMinGap time.Duration // 两次限速触发的最短间隔（debounce）
+	// StateFile 持久化「原始节点」的磁盘路径(JSON)。空 = 不持久化(仅内存,
+	// 进程被强杀后无法恢复)。设置后:Start 落盘 {group,node};Stop 成功恢复后删除。
+	StateFile string
 }
 
 // ProxyDelayQuerier 抽象 in-flight 计数 + 关闭空闲连接，便于测试。
@@ -43,10 +46,10 @@ type ProxyDelayQuerier interface {
 
 // ClashRotator 切节点循环。
 type ClashRotator struct {
-	cfg       ClashRotatorConfig
-	proxy     ProxyDelayQuerier
-	logFn     func(string)
-	httpc     *http.Client
+	cfg   ClashRotatorConfig
+	proxy ProxyDelayQuerier
+	logFn func(string)
+	httpc *http.Client
 
 	mu        sync.Mutex
 	running   bool
@@ -123,15 +126,25 @@ func (r *ClashRotator) Start() {
 	r.triggerCh = make(chan string, 4)
 	r.mu.Unlock()
 
-	// 捕获原始节点（best-effort）。在主线程同步拉一次，避免与 loop 内首次切换竞争。
+	// 捕获原始节点（best-effort）。在主线程同步拉一次,避免与 loop 内首次切换竞争。
 	if r.cfg.Group != "" {
 		if _, current, err := r.listGroupNodes(r.cfg.Group); err == nil && current != "" {
 			r.mu.Lock()
 			r.originalNode = current
 			r.mu.Unlock()
+			// 落盘,使进程被强杀后下次启动仍能恢复(见 RecoverResidualClashNode)。
+			r.persistState(r.cfg.Group, current)
 			r.log("已记录原始节点: %s（关闭轮换时将恢复）", current)
 		} else if err != nil {
-			r.log("记录原始节点失败（关闭时无法恢复）: %v", err)
+			// 探活失败:若磁盘已有上次残留记录,沿用它作为待恢复节点,不再静默放弃。
+			if g, n, ok := readClashState(r.cfg.StateFile); ok && g == r.cfg.Group && n != "" {
+				r.mu.Lock()
+				r.originalNode = n
+				r.mu.Unlock()
+				r.log("记录原始节点探活失败,沿用磁盘残留记录: %s", n)
+			} else {
+				r.log("记录原始节点失败（关闭时无法恢复）: %v", err)
+			}
 		}
 	}
 
@@ -167,8 +180,11 @@ func (r *ClashRotator) Stop() {
 		} else {
 			r.log("已停止；✓ 已恢复原始节点: %s", original)
 		}
+		// 恢复流程已执行(成功或当前已一致),清掉磁盘残留记录,避免下次启动误恢复。
+		r.clearState()
 		return
 	}
+	r.clearState()
 	r.log("已停止")
 }
 

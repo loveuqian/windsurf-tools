@@ -71,6 +71,13 @@ func ParseConnectEOS(body []byte) ConnectErrorResult {
 	return ConnectErrorResult{}
 }
 
+// uint32be 把 v 编成 4 字节大端,用于重建 Connect 帧头喂给 parseConnectFrame。
+func uint32be(v int) []byte {
+	b := make([]byte, 4)
+	binary.BigEndian.PutUint32(b, uint32(v))
+	return b
+}
+
 // parseConnectFrame tries to parse a single Connect frame starting at body[0].
 func parseConnectFrame(body []byte) ConnectErrorResult {
 	if len(body) < 5 {
@@ -304,8 +311,9 @@ type ConnectStreamWatcher struct {
 	sawError  bool
 	finalized bool
 
-	grpcBuf      []byte           // 帧解析滚动 buffer（消费完即丢弃）
-	tokenCounter tokenAccumulator // P7: 增量 token 计数（替代 strings.Builder）
+	grpcBuf      []byte             // 帧解析滚动 buffer（消费完即丢弃）
+	tokenCounter tokenAccumulator   // P7: 增量 token 计数（替代 strings.Builder）
+	eosResult    ConnectErrorResult // 帧对齐解析路径捕获到的 EOS trailer 结果(若有)
 }
 
 func NewConnectStreamWatcher(inner io.ReadCloser, onError func(ConnectErrorResult), onSuccess func(int)) *ConnectStreamWatcher {
@@ -336,7 +344,16 @@ func (w *ConnectStreamWatcher) Read(p []byte) (int, error) {
 			w.grpcBuf = w.grpcBuf[5+payloadLen:]
 
 			if flags&2 != 0 {
-				continue // EOS 帧由 finalize 统一处理
+				// EOS trailer 帧。★ 在帧对齐的解析路径里直接解析它 —— 这里帧边界
+				// 精确,而 finalize 用的 w.buf 只保留最后 8KB,截断点几乎必落在某个
+				// data 帧中间,从非帧边界解析会全部错位,导致长响应(>8KB)末尾的
+				// resource_exhausted / rate_limit EOS 永远检测不到 → 不自动切号。
+				if !w.eosResult.IsError {
+					if r := parseConnectFrame(append([]byte{flags}, append(uint32be(payloadLen), payload...)...)); r.IsError {
+						w.eosResult = r
+					}
+				}
+				continue
 			}
 			decoded, decErr := decodeStreamEnvelopePayload(flags, payload)
 			if decErr != nil || len(decoded) == 0 {
@@ -395,7 +412,16 @@ func (w *ConnectStreamWatcher) finalize() {
 	}
 	w.finalized = true
 
-	// Check for EOS error in accumulated buffer
+	// ① 优先用帧对齐路径捕获到的 EOS 结果(精确,不受 8KB 截断影响)。
+	if w.eosResult.IsError {
+		w.sawError = true
+		if w.onError != nil {
+			w.onError(w.eosResult)
+		}
+		return
+	}
+
+	// ② 兜底:在累积的最后 8KB 里再扫一次(覆盖 EOS 帧本身 < 8KB 且未被①捕获的边角情况)。
 	result := findEOSInBody(w.buf)
 	if result.IsError {
 		w.sawError = true

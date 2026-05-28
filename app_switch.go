@@ -301,7 +301,40 @@ func (a *App) prepareAccount(acc models.Account, allowExhausted bool) (models.Ac
 	return acc, nil
 }
 
+// autoSwitchDebounce 同一次耗尽事件的多条触发路径之间的去重窗口。
+// onKeyExhausted 回调、hot-poll、refreshDueQuotas 可能在 1~2s 内对同一账号
+// 各自触发一次切号;窗口内的后续调用直接复用刚切到的账号,不再重复切。
+const autoSwitchDebounce = 3 * time.Second
+
+// rotateMitmToNextAvailable 是所有 app 级自动切号的统一入口。
+// 用 switchMu 串行化 + lastAutoSwitchAt 去重,消除三路并发对同一耗尽事件
+// 重复切号(账号 1~2s 内连跳 2~3 个号、落点不确定)的问题。
 func (a *App) rotateMitmToNextAvailable(currentID string, planFilter string) (models.Account, error) {
+	a.switchMu.Lock()
+	defer a.switchMu.Unlock()
+
+	// 去重:刚切过且当前 MITM key 已不是传入的 currentID(说明上一次切号已生效),
+	// 直接返回当前账号,不再重复切。
+	if time.Since(a.lastAutoSwitchAt) < autoSwitchDebounce {
+		curKey := a.mitmProxy.CurrentAPIKey()
+		curAccID := findAccountIDForMITMAPIKey(a.store.GetAllAccounts(), curKey)
+		if curAccID != "" && curAccID != currentID {
+			utils.DLog("[切号] rotateMitm: %s 内已切过号(当前=%s),跳过重复切",
+				autoSwitchDebounce, curAccID[:min(8, len(curAccID))])
+			if acc, err := a.store.GetAccount(curAccID); err == nil {
+				return acc, nil
+			}
+		}
+	}
+
+	acc, err := a.rotateMitmToNextAvailableLocked(currentID, planFilter)
+	if err == nil {
+		a.lastAutoSwitchAt = time.Now()
+	}
+	return acc, err
+}
+
+func (a *App) rotateMitmToNextAvailableLocked(currentID string, planFilter string) (models.Account, error) {
 	bypassQuota := a.shouldBypassQuotaCheck()
 	settings := a.store.GetSettings()
 	candidates := orderedMitmCandidatesWithSettings(a.store.GetAllAccounts(), currentID, planFilter, bypassQuota, settings)

@@ -38,14 +38,19 @@ type App struct {
 	cancelQuotaHotPoll     context.CancelFunc
 	lastQuotaHotSwitch     time.Time
 	lastQuotaHotSwitchMu   sync.Mutex
-	tokenRefreshRunMu      sync.Mutex
-	quotaRefreshRunMu      sync.Mutex
-	tasks                  *TaskRegistry       // F1: 批量任务进度面板
-	switchHistory          *switchHistoryStore // F2: 切号历史持久化
-	mu                     sync.Mutex
-	cleanupMitmOnExitFn    func() error
-	activateExistingAppFn  func()
-	traySupportedFn        func() bool
+	// switchMu 串行化所有 app 级自动切号入口(onKeyExhausted / hot-poll /
+	// refreshDueQuotas / rotation-pool),配合 lastAutoSwitchAt 去重:同一次
+	// 耗尽事件经多条路径触发时,只切一次,避免账号在 1~2s 内连跳 2~3 个号。
+	switchMu              sync.Mutex
+	lastAutoSwitchAt      time.Time
+	tokenRefreshRunMu     sync.Mutex
+	quotaRefreshRunMu     sync.Mutex
+	tasks                 *TaskRegistry       // F1: 批量任务进度面板
+	switchHistory         *switchHistoryStore // F2: 切号历史持久化
+	mu                    sync.Mutex
+	cleanupMitmOnExitFn   func() error
+	activateExistingAppFn func()
+	traySupportedFn       func() bool
 	// silentFromFlag 由 main 在解析到 --silent 时设置，与 settings.silent_start 二选一即可触发静默启动
 	silentFromFlag bool
 	// shuttingDown 在主动退出流程开始时被原子置 true。onBeforeClose 看到此标志
@@ -142,20 +147,31 @@ func (a *App) initBackend() error {
 	}
 	a.restartQuotaHotPollIfNeeded()
 	a.applyOpenAIRelaySettings()
+	// ★ 在启动 rotator 之前,先把上次未正常退出残留的 Clash 节点切回原节点
+	//   (kill -9/崩溃后的兜底,详见 clash_rotator_state.go)。
+	a.clashMod.Recover()
 	a.applyClashRotatorSettings()
 	a.applyRotationPoolSettings()
 	return nil
 }
 
 func (a *App) shouldStartHidden() bool {
-	if a.store == nil {
-		return a.silentFromFlag && a.supportsTray()
+	// 命令行 --silent 是显式意图(开机自启后台跑),无条件生效——即使无托盘。
+	// 无托盘平台(macOS/Linux)虽无图标可点,但单实例锁的 onSecondInstanceLaunch
+	// → activateExistingWindow(WindowShow/Unminimise,跨平台 Wails runtime)
+	// 能在再次启动 app 时唤出窗口,所以不会把用户彻底锁死。
+	if a.silentFromFlag {
+		return true
 	}
-	settings := a.store.GetSettings()
+	if a.store == nil {
+		return false
+	}
+	// settings.SilentStart 是 UI 隐式开关:仅在有托盘(可点图标唤出)时生效,
+	// 避免无托盘平台用户开了开关后每次开机窗口都不见、又不知道再启一次能唤出。
 	if !a.supportsTray() {
 		return false
 	}
-	return a.silentFromFlag || settings.SilentStart
+	return a.store.GetSettings().SilentStart
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -194,11 +210,17 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) shutdown(ctx context.Context) {
 	log.Printf("[WindsurfTools] desktop shutdown requested")
-	if a.cancelAutoRefresh != nil {
-		a.cancelAutoRefresh()
+	a.mu.Lock()
+	cancelRefresh := a.cancelAutoRefresh
+	cancelQuota := a.cancelAutoQuotaRefresh
+	a.cancelAutoRefresh = nil
+	a.cancelAutoQuotaRefresh = nil
+	a.mu.Unlock()
+	if cancelRefresh != nil {
+		cancelRefresh()
 	}
-	if a.cancelAutoQuotaRefresh != nil {
-		a.cancelAutoQuotaRefresh()
+	if cancelQuota != nil {
+		cancelQuota()
 	}
 	a.stopQuotaHotPoll()
 	if a.openaiRelay != nil {

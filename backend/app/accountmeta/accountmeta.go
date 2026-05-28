@@ -275,6 +275,12 @@ func ApplyProfile(acc *models.Account, profile *services.AccountProfile) {
 	// 优先使用官方接口返回的 resetAt；缺失时保持为空，不再伪造周额度/周重置时间。
 	acc.DailyResetAt = strings.TrimSpace(profile.DailyResetAt)
 	acc.WeeklyResetAt = strings.TrimSpace(profile.WeeklyResetAt)
+	// Extra usage balance(overageBalanceMicros):仅当本次响应确实带了该字段时才覆盖,
+	// 否则保留旧值(GetUserStatus 这类接口不返回 extra usage,不应把已知余额清零)。
+	if profile.HasExtraUsageBalance {
+		acc.HasExtraUsageBalance = true
+		acc.ExtraUsageBalanceMicros = profile.ExtraUsageBalanceMicros
+	}
 	if preferred := ChoosePreferredExpiry(acc, profile.SubscriptionExpiresAt); preferred != "" {
 		acc.SubscriptionExpiresAt = preferred
 	} else {

@@ -31,6 +31,10 @@ echo "  Windsurf Tools — 安装 MITM CA 证书"
 echo "============================================"
 echo ""
 echo "请输入你的 macOS 登录密码（不会显示）："
+# 先清掉钥匙串里可能堆积的旧同名证书条目,避免重复安装堆积多张。
+while sudo /usr/bin/security find-certificate -c "Windsurf Tools CA" /Library/Keychains/System.keychain >/dev/null 2>&1; do
+  sudo /usr/bin/security delete-certificate -c "Windsurf Tools CA" /Library/Keychains/System.keychain >/dev/null 2>&1 || break
+done
 sudo /usr/bin/security add-trusted-cert -d -r trustRoot \
   -k /Library/Keychains/System.keychain %q
 echo ""

@@ -200,13 +200,11 @@ func (s *PoolKeyState) isAvailable() bool {
 	if s.RuntimeExhausted {
 		return false
 	}
-	// 非额度耗尽的瞬态错误冷却：到期后恢复
-	if time.Now().After(s.CooldownUntil) {
-		s.Healthy = true
-		s.ConsecutiveErrs = 0
-		return true
-	}
-	return false
+	// 非额度耗尽的瞬态错误冷却：到期后视为可用。
+	// ★ 纯只读判断 —— 不在这里写 s.Healthy/s.ConsecutiveErrs:本函数会在仅持
+	//   p.mu.RLock() 的选号路径(pickStickyKey / leastConnections* / pickPoolKeyForSession)
+	//   被并发调用,写共享字段是数据竞争。字段的真正复位交给写锁路径下的 recordSuccess。
+	return time.Now().After(s.CooldownUntil)
 }
 
 // clearExhausted 解除「额度耗尽」锁定。仅清除 RuntimeExhausted + 冷却 + 健康标志，
@@ -2735,8 +2733,12 @@ func (p *MitmProxy) pickKeyForNewConversation() (string, []byte) {
 		return stickyKey, stickyJWT
 	}
 
-	// ★ 持有 pendingNewConvMu 全程：确保 "统计 pending → 选 key → push pending" 原子化，
-	// 防止两个并发新对话都看到 pending=0 而选到同一个 key。
+	// ★ 取锁顺序统一为 sessionsMu → pendingNewConvMu → p.mu,与 pickPoolKeyForSession
+	// 完全一致,消除 AB-BA 死锁(后者持 sessionsMu 时会调 popPendingNewConvKey 拿
+	// pendingNewConvMu;本函数过去先拿 pendingNewConvMu 再拿 sessionsMu,方向相反)。
+	// 选 key + push pending 在两把锁内原子完成;JWT 获取(可能触发网络刷新)移到锁外,
+	// 避免长时间占用 sessionsMu 阻塞所有会话请求。
+	p.sessionsMu.RLock()
 	p.pendingNewConvMu.Lock()
 
 	cutoff := time.Now().Add(-pendingNewConvMaxAge)
@@ -2759,21 +2761,14 @@ func (p *MitmProxy) pickKeyForNewConversation() (string, []byte) {
 		pendingCounts[e.PoolKey]++
 	}
 
-	// 在 sessionsMu + p.mu 下选最少连接 key（计入 pending 虚拟会话）
-	p.sessionsMu.RLock()
+	// 选最少连接 key（计入 pending 虚拟会话）。p.mu 是最内层锁。
 	p.mu.RLock()
 	key := p.leastConnectionsKeyWithPending("", pendingCounts)
 	p.mu.RUnlock()
-	p.sessionsMu.RUnlock()
 
 	if key == "" {
 		p.pendingNewConvMu.Unlock()
-		return p.pickPoolKeyAndJWT()
-	}
-
-	jwt := p.usableJWTForKey(key)
-	if len(jwt) == 0 {
-		p.pendingNewConvMu.Unlock()
+		p.sessionsMu.RUnlock()
 		return p.pickPoolKeyAndJWT()
 	}
 
@@ -2784,6 +2779,15 @@ func (p *MitmProxy) pickKeyForNewConversation() (string, []byte) {
 	}
 	savedPendingCount := pendingCounts[key] + 1
 	p.pendingNewConvMu.Unlock()
+	p.sessionsMu.RUnlock()
+
+	// ── 锁外获取 JWT(可能触发网络刷新)──
+	jwt := p.usableJWTForKey(key)
+	if len(jwt) == 0 {
+		// 该 key 暂无可用 JWT。上面 push 的 pending 条目无害(会过期,且第二条消息
+		// 即便匹配到它也会因 JWT 缺失再迁移),直接回落全局选择。
+		return p.pickPoolKeyAndJWT()
+	}
 
 	p.log("新对话分配(pending): key=%s... (pending=%d sessions=%d)",
 		key[:minStr(12, len(key))], savedPendingCount, p.sessionBindingCountSafe(key))

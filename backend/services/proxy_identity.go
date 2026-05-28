@@ -267,14 +267,19 @@ func decompressBody(body []byte) ([]byte, envelopeType) {
 		if flags == 0x00 || flags == 0x01 {
 			payloadLen := binary.BigEndian.Uint32(body[1:5])
 			diff := len(body) - 5 - int(payloadLen)
+			// diff 容差 ±10:部分 client 的 length 标记不准。用作"这是不是 envelope"的软判据。
 			if diff >= -10 && diff <= 10 {
 				if flags&0x01 != 0 {
+					// gzip 分支用 body[5:](全部剩余字节),与 payloadLen 无关,恒安全。
 					// ★ D-5: gzip pool 复用 Reader，避免每请求 ~32KB deflate state 分配。
 					if decompressed, err := gunzipBytes(body[5:]); err == nil {
 						return decompressed, envelopeConnectGzip
 					}
-				} else {
-					return body[5 : 5+int(payloadLen)], envelopeConnectRaw
+				} else if end := 5 + int(payloadLen); end <= len(body) {
+					// 原始分支按 payloadLen 切片:payloadLen 来自不可信上游,diff 为负时
+					// (声明长度 > 实际剩余)会越界 panic。显式校验 end<=len(body),
+					// 越界则降级为 plain 而非崩溃。
+					return body[5:end], envelopeConnectRaw
 				}
 			}
 		}

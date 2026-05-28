@@ -49,6 +49,10 @@ const (
 	maxCooldownBaseSec     = 3600
 	minCooldownBaseSec     = 30
 	maxCooldownStreak      = 4 // 连续命中翻倍上限：base*2^4 = base*16
+	// maxCooldownDurationSec 对最终冷却时长(base * 2^streak)的硬上限。
+	// 没有它时 base=3600 + streak=4 → 16h,账号被长时间排除出自动选号。
+	// 钳到 1h,与 maxCooldownBaseSec 同量级,作为兜底防御。
+	maxCooldownDurationSec = 3600
 )
 
 type cooldownEntry struct {
@@ -92,6 +96,10 @@ func (s *switchCooldownState) apply(accountID, kind string, baseSec int) {
 	}
 	mult := 1 << streak // 2^streak
 	dur := time.Duration(baseSec) * time.Duration(mult) * time.Second
+	// 最终时长硬上限,防止 base*2^streak 累计出 16h 这种离谱冷却。
+	if dur > maxCooldownDurationSec*time.Second {
+		dur = maxCooldownDurationSec * time.Second
+	}
 	s.entries[accountID] = cooldownEntry{
 		until:    time.Now().Add(dur),
 		streak:   streak,

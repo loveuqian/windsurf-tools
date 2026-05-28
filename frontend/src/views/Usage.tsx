@@ -118,6 +118,7 @@ export default function Usage() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [modelFilter, setModelFilter] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 100;
@@ -195,6 +196,11 @@ export default function Usage() {
       if (status !== "all" && rec.status !== status) return false;
       const recordModel = rec.model || rec.request_model || "unknown";
       if (model !== "all" && recordModel !== model) return false;
+      if (sourceFilter !== "all") {
+        const isProvider = rec.format === "provider-relay";
+        if (sourceFilter === "provider" && !isProvider) return false;
+        if (sourceFilter === "pool" && isProvider) return false;
+      }
       if (!query) return true;
       const haystack = [
         rec.model,
@@ -209,7 +215,7 @@ export default function Usage() {
         .toLowerCase();
       return haystack.includes(query);
     });
-  }, [records, selectedDate, statusFilter, modelFilter, searchQuery]);
+  }, [records, selectedDate, statusFilter, modelFilter, sourceFilter, searchQuery]);
 
   const totalPages = Math.max(1, Math.ceil(filteredRecords.length / pageSize));
   const paginatedRecords = useMemo(() => {
@@ -219,7 +225,7 @@ export default function Usage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedDate, statusFilter, modelFilter, searchQuery]);
+  }, [selectedDate, statusFilter, modelFilter, sourceFilter, searchQuery]);
 
   useEffect(() => {
     if (currentPage > totalPages) setCurrentPage(totalPages);
@@ -473,6 +479,8 @@ export default function Usage() {
             onStatusFilter={setStatusFilter}
             modelFilter={modelFilter}
             onModelFilter={setModelFilter}
+            sourceFilter={sourceFilter}
+            onSourceFilter={setSourceFilter}
             searchQuery={searchQuery}
             onSearchQuery={setSearchQuery}
             currentPage={currentPage}

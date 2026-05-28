@@ -195,8 +195,10 @@ func (t *UsageTracker) computeSummaryLocked() UsageSummary {
 		} else if strings.Contains(mL, "gpt-4") {
 			pPrice, cPrice = 2.50, 10.00
 		} else {
-			// 默认按 Opus 定价估算（用户常用）
-			pPrice, cPrice = 5.00, 25.00
+			// 未知模型不计费。MITM 直连场景 model 多是内部 enum(cascade / mitm-direct 等),
+			// 旧实现一律按 Opus 顶格($5/$25)估算 → 成本面板系统性高估数倍。无法可靠定价时
+			// 记 0,好过给用户一个错得离谱的数字。
+			pPrice, cPrice = 0, 0
 		}
 
 		cost := (float64(r.PromptTokens) / 1000000.0 * pPrice) + (float64(r.CompletionTokens) / 1000000.0 * cPrice)
@@ -415,7 +417,7 @@ func (t *UsageTracker) compactLocked() error {
 }
 
 // estimateTokens 粗略估算 token 数
-// 按字符类型分桶：ASCII ~4 字符/token, CJK ~1.5 字符/token, 空白 ~6 字符/token
+// 按字符类型分桶：ASCII ~4 字符/token, CJK ~1.5 字符/token, 空白 ~12 字符/token
 func estimateTokens(text string) int {
 	var acc tokenAccumulator
 	acc.Add(text)
@@ -455,9 +457,12 @@ func (a *tokenAccumulator) Total() int {
 	if a.ascii+a.cjk+a.space == 0 {
 		return 0
 	}
-	// tokens ≈ ascii/4 + cjk/1.5 + space/6
-	// 公分母 12: (ascii*3 + cjk*8 + space*2) / 12，+11 做向上取整
-	n := (a.ascii*3 + a.cjk*8 + a.space*2 + 11) / 12
+	// tokens ≈ ascii/4 + cjk/1.5 + space/12
+	// 公分母 12: (ascii*3 + cjk*8 + space*1) / 12，+11 做向上取整。
+	// ★ 空白权重从 2 降到 1(≈12 字符/token):流式响应含大量结构性空白
+	//   (换行/缩进/keep-alive),按正文权重计会让 completion_tokens 系统性偏高。
+	//   保留极小权重而非归零,避免大段缩进代码被低估。
+	n := (a.ascii*3 + a.cjk*8 + a.space + 11) / 12
 	if n == 0 {
 		n = 1
 	}

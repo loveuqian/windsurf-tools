@@ -39,6 +39,8 @@ interface Props {
   onStatusFilter: (s: string) => void;
   modelFilter: string;
   onModelFilter: (s: string) => void;
+  sourceFilter: string;
+  onSourceFilter: (s: string) => void;
   searchQuery: string;
   onSearchQuery: (s: string) => void;
   currentPage: number;
@@ -64,6 +66,8 @@ export default function UsageRecordsTable({
   onStatusFilter,
   modelFilter,
   onModelFilter,
+  sourceFilter,
+  onSourceFilter,
   searchQuery,
   onSearchQuery,
   currentPage,
@@ -149,6 +153,20 @@ export default function UsageRecordsTable({
                   {m}
                 </option>
               ))}
+            </select>
+          </label>
+          <label className="min-w-0">
+            <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-gray-400 dark:text-gray-500 mb-2">
+              来源
+            </div>
+            <select
+              value={sourceFilter}
+              onChange={(e) => onSourceFilter(e.target.value)}
+              className="no-drag-region w-full rounded-ios-block border border-black/[0.06] bg-white/80 px-4 py-3 text-[13px] font-medium text-gray-800 shadow-sm outline-none transition focus:border-ios-blue/40 dark:border-white/[0.08] dark:bg-black/20 dark:text-gray-100"
+            >
+              <option value="all">全部来源</option>
+              <option value="pool">号池</option>
+              <option value="provider">提供商</option>
             </select>
           </label>
         </div>
@@ -243,9 +261,27 @@ export default function UsageRecordsTable({
                     {formatDuration(rec.duration_ms)}
                   </td>
                   <td className="px-6 py-3.5 whitespace-nowrap">
-                    <span className="bg-sky-500/10 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300 px-2 py-0.5 rounded font-mono text-[11px] font-semibold uppercase">
-                      {rec.format || "-"}
-                    </span>
+                    {(() => {
+                      const isProvider = rec.format === "provider-relay";
+                      const isPool = rec.format === "windsurf-mitm";
+                      const label = isProvider
+                        ? `提供商${rec.request_model ? "·" + rec.request_model : ""}`
+                        : isPool
+                          ? "号池"
+                          : rec.format || "-";
+                      const cls = isProvider
+                        ? "bg-violet-500/10 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300"
+                        : isPool
+                          ? "bg-sky-500/10 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300"
+                          : "bg-gray-500/10 text-gray-600 dark:bg-gray-500/20 dark:text-gray-300";
+                      return (
+                        <span
+                          className={`${cls} px-2 py-0.5 rounded text-[11px] font-semibold`}
+                        >
+                          {label}
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className="px-6 py-3.5 whitespace-nowrap">
                     {rec.api_key_short || rec.error_detail ? (

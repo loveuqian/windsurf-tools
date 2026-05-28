@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -54,7 +55,7 @@ func FetchProviderModels(ctx context.Context, httpClient *http.Client, provider,
 }
 
 func fetchOpenAICompatModels(ctx context.Context, c *http.Client, baseURL, token string) ([]string, error) {
-	endpoint := baseURL + "/v1/models"
+	endpoint := providerModelsEndpoint(baseURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("构造请求失败: %w", err)
@@ -92,7 +93,7 @@ func fetchOpenAICompatModels(ctx context.Context, c *http.Client, baseURL, token
 }
 
 func fetchAnthropicModels(ctx context.Context, c *http.Client, baseURL, token string) ([]string, error) {
-	endpoint := baseURL + "/v1/models"
+	endpoint := providerModelsEndpoint(baseURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("构造请求失败: %w", err)
@@ -175,7 +176,8 @@ func readLimitedBody(resp *http.Response, max int) string {
 	if resp.Body == nil {
 		return ""
 	}
-	buf := make([]byte, max)
-	n, _ := resp.Body.Read(buf)
-	return strings.TrimSpace(string(buf[:n]))
+	// io.Reader.Read 不保证一次填满 buffer,用 LimitReader+ReadAll 读全(上限 max),
+	// 避免错误响应体只读到几十字节导致排障信息被截断。
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, int64(max)))
+	return strings.TrimSpace(string(data))
 }

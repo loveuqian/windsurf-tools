@@ -43,13 +43,37 @@ func TestActivateExistingWindowCallsHook(t *testing.T) {
 	}
 }
 
-func TestShouldStartHiddenRequiresTrayWhenToolbarDisabled(t *testing.T) {
+func TestShouldStartHiddenSilentFlagWorksWithoutTray(t *testing.T) {
+	// 命令行 --silent 是显式后台意图,应无条件隐藏——即使无托盘。
+	// 无托盘平台仍可通过单实例锁(再次启动 → onSecondInstanceLaunch)唤出窗口。
 	app := NewApp()
 	app.silentFromFlag = true
 	app.traySupportedFn = func() bool { return false }
 
+	if !app.shouldStartHidden() {
+		t.Fatal("shouldStartHidden() should honor --silent flag even when tray is unavailable")
+	}
+}
+
+func TestShouldStartHiddenIgnoresSettingToggleWithoutTray(t *testing.T) {
+	// settings.SilentStart(UI 隐式开关)在无托盘平台不生效,避免用户锁死自己。
+	s, err := store.NewStoreInPaths(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStoreInPaths() error = %v", err)
+	}
+	settings := s.GetSettings()
+	settings.SilentStart = true
+	if err := s.UpdateSettings(settings); err != nil {
+		t.Fatalf("UpdateSettings() error = %v", err)
+	}
+
+	app := NewApp()
+	app.store = s
+	app.silentFromFlag = false
+	app.traySupportedFn = func() bool { return false }
+
 	if app.shouldStartHidden() {
-		t.Fatal("shouldStartHidden() should ignore silent start when tray is unavailable and toolbar is disabled")
+		t.Fatal("shouldStartHidden() should ignore SilentStart setting when tray is unavailable")
 	}
 }
 

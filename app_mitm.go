@@ -416,9 +416,7 @@ func (a *App) ClearAllMitmExhausted() int {
 // ToggleMitmDebugDump 开启/关闭 MITM proto dump
 func (a *App) ToggleMitmDebugDump(enabled bool) {
 	a.mitmProxy.SetDebugDump(enabled)
-	settings := a.store.GetSettings()
-	settings.MitmDebugDump = enabled
-	a.store.UpdateSettings(settings)
+	_ = a.store.MutateSettings(func(s *models.Settings) { s.MitmDebugDump = enabled })
 }
 
 // 注：原 GetMitmDebugDumpEnabled / GetProtoDumpDir 已删除：
@@ -428,9 +426,7 @@ func (a *App) ToggleMitmDebugDump(enabled bool) {
 // ToggleMitmFullCapture 开启/关闭全量抓包
 func (a *App) ToggleMitmFullCapture(enabled bool) {
 	a.mitmProxy.SetFullCapture(enabled)
-	settings := a.store.GetSettings()
-	settings.MitmFullCapture = enabled
-	a.store.UpdateSettings(settings)
+	_ = a.store.MutateSettings(func(s *models.Settings) { s.MitmFullCapture = enabled })
 }
 
 // GetMitmFullCaptureEnabled 返回全量抓包是否开启

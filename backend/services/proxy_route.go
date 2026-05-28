@@ -60,7 +60,11 @@ func (p *MitmProxy) tryServeRoute(w http.ResponseWriter, r *http.Request) bool {
 	defer cancel()
 
 	httpClient := p.routeClient()
-	Route(ctx, w, httpClient, router, cascadeBody)
+	if Route(ctx, w, httpClient, router, cascadeBody, p.usageTracker) == RouteFallback {
+		// 预检未通过且未写任何字节 → 还原 body,回落号池
+		r.Body = io.NopCloser(bytes.NewReader(rawBody))
+		return false
+	}
 	return true
 }
 
